@@ -1,6 +1,7 @@
 import {
   controlProfileFor,
   createDefaultContext,
+  summarizePlan,
   type BlueprintEntity,
   type BuildEvent,
   type BuildStage,
@@ -15,11 +16,10 @@ import { generatePrompt } from "../prompts.js";
 import type { AssetGenerator } from "../services/assetGenerator.js";
 import type { GamePackager } from "../services/gamePackager.js";
 import type { LLMClient } from "../services/llmClient.js";
-import { pickGenrePack } from "./genrePacks.js";
+import { packForKind, pickGenrePack } from "./genrePacks.js";
 import {
   animationFor,
   behaviorFor,
-  deriveTheme,
   deriveTitle,
   moodLabel,
   planLevelPlacements,
@@ -28,6 +28,7 @@ import {
   slugify,
   type Theme,
 } from "./heuristics.js";
+import { planRequest } from "./planner.js";
 import { buildScaffold } from "./scaffold.js";
 import { authorGameplayScript } from "./scriptAuthor.js";
 
@@ -91,9 +92,19 @@ export async function* runBuild(
   const maxAmbient = options.maxAmbient ?? MAX_AMBIENT_DEFAULT;
   const fidelity = options.fidelity ?? DEFAULT_FIDELITY;
 
-  const pack = pickGenrePack(prompt);
-  const theme = deriveTheme(prompt);
-  const title = deriveTitle(prompt);
+  // --- Stage: plan (understand & decompose the request) --------------------
+  // A single "layer of thought" that clarifies the request, breaks it into
+  // sub-requests → tasks → subtasks, and merges it back into a focused plan
+  // (LLM when available, deterministic heuristic offline). Everything below is
+  // driven by this plan, so the built game matches what was actually asked.
+  yield { type: "stage-start", stage: "plan", label: "Clarifying & planning the request" };
+  const plan = await planRequest(prompt, deps.llm);
+  yield { type: "message", role: "assistant", content: summarizePlan(plan) };
+  yield { type: "stage-complete", stage: "plan" };
+
+  const pack = packForKind(plan.genre);
+  const theme = structuredClone(pack.theme);
+  const title = plan.title || deriveTitle(prompt);
   const slug = slugify(title);
   const context = nowContext(theme, title);
   const timestamp = Date.now();
@@ -108,8 +119,9 @@ export async function* runBuild(
     entities: [],
     player: playerFor(theme),
     mechanics: [...pack.mechanics],
-    scripts: {},
+    scripts: { "plan.json": JSON.stringify(plan, null, 2) },
     animations: {},
+    plan,
     createdAt: timestamp,
     updatedAt: timestamp,
   };

@@ -27,7 +27,11 @@ const CINEMATIC_NATURE =
   "lush cinematic nature — layered foliage, weathered stone, volumetric haze, rich PBR materials";
 
 export function pickGenrePack(prompt: string): GenrePack {
-  const kind = inferGenreKind(prompt);
+  return packForKind(inferGenreKind(prompt));
+}
+
+/** Resolve the pack for an already-decided genre (e.g. from the planner). */
+export function packForKind(kind: GenreKind): GenrePack {
   switch (kind) {
     case "racing":
       return RACING_PACK;
