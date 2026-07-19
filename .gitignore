@@ -8,6 +8,7 @@ dist/
 # Runtime data / generated assets
 server/data/*.json
 server/data/games/
+server/data/projects/
 !server/data/.gitkeep
 web/public/generated/
 
