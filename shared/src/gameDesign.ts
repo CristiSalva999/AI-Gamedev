@@ -135,16 +135,89 @@ export function defaultTerrain(kind: TerrainKind, fidelity: FidelityLevel): Terr
   }
 }
 
-/** Infer a genre kind from a free-text user prompt (offline-safe). */
+/**
+ * Words that, when they appear directly before "game"/"gioco"/"experience",
+ * are treated as an explicit genre declaration (highest-confidence signal).
+ */
+const DECLARED_GENRE_WORDS: Record<GenreKind, readonly string[]> = {
+  racing: ["racing", "race", "kart", "driving"],
+  shooter: ["shooter", "shooting", "fps"],
+  dungeon: ["dungeon", "crawler", "roguelike"],
+  horror: ["horror"],
+  survival: ["survival"],
+  exploration: ["exploration", "explorer", "adventure"],
+  sandbox: ["sandbox"],
+};
+
+/**
+ * Weighted keyword signals for the scoring fallback. Kept word-boundary strict
+ * and free of loose stems (e.g. no bare "drift"/"car"/"track") so incidental
+ * prose like "pollen drifting" or "soundtrack" cannot flip the genre.
+ */
+const GENRE_SIGNALS: Record<GenreKind, RegExp> = {
+  racing: /\b(racing|race|races|arcade|kart|karts|circuit|raceway|speedway|lap|laps|veicol\w*|macchin\w*)\b/g,
+  shooter: /\b(shooter|shoot|shooting|fps|blaster|gunfight|bullet|space station)\b/g,
+  dungeon: /\b(dungeon|dungeons|crypt|tomb|crawler|catacomb)\b/g,
+  horror: /\b(horror|haunted|zombie|zombies|ghost|ghosts|nightmare)\b/g,
+  survival: /\b(survival|survive|survives|surviving|craft|crafting|hunger|thirst|stamina|scavenge|permadeath)\b/g,
+  exploration: /\b(exploration|explore|explorer|exploring|adventure|forest|ruin|ruins|nature|grove|meadow|hike|hiking)\b/g,
+  sandbox: /\b(sandbox|creative mode|build freely)\b/g,
+};
+
+const GENRE_PRIORITY: readonly GenreKind[] = [
+  "racing",
+  "shooter",
+  "horror",
+  "dungeon",
+  "survival",
+  "exploration",
+  "sandbox",
+];
+
+/**
+ * First layer of genre classification: honor an explicit "<genre> game"
+ * declaration, choosing the earliest one in the text so the primary request
+ * ("Create a survival game …") wins over incidental mentions later on.
+ */
+function detectDeclaredGenre(p: string): GenreKind | null {
+  let best: { kind: GenreKind; index: number } | null = null;
+  for (const kind of GENRE_PRIORITY) {
+    for (const word of DECLARED_GENRE_WORDS[kind]) {
+      const re = new RegExp(`\\b${word}\\b[\\s-]+(?:game|gioco|experience|sim|simulator)\\b`, "g");
+      const match = re.exec(p);
+      if (match && (best === null || match.index < best.index)) {
+        best = { kind, index: match.index };
+      }
+    }
+  }
+  return best?.kind ?? null;
+}
+
+/** Second layer: weighted keyword scoring across the full prompt. */
+function scoreGenre(p: string): GenreKind {
+  let winner: GenreKind = "sandbox";
+  let bestScore = 0;
+  for (const kind of GENRE_PRIORITY) {
+    const matches = p.match(GENRE_SIGNALS[kind]);
+    const score = matches ? matches.length : 0;
+    if (score > bestScore) {
+      bestScore = score;
+      winner = kind;
+    }
+  }
+  return winner;
+}
+
+/**
+ * Infer a genre kind from a free-text user prompt (offline-safe).
+ *
+ * Two layers of reasoning:
+ *   1. An explicit "<genre> game" declaration always wins (e.g. the setup
+ *      wizard emits "Create a survival game …").
+ *   2. Otherwise, weighted keyword scoring picks the strongest signal, so a
+ *      single stray keyword buried in a long brief cannot hijack the genre.
+ */
 export function inferGenreKind(prompt: string): GenreKind {
   const p = prompt.toLowerCase();
-  if (/\b(race|racing|arcade|car|cars|kart|drift|track|veicol|macchin)/.test(p)) {
-    return "racing";
-  }
-  if (/\b(shoot|fps|blaster|space station|neon|cyber)/.test(p)) return "shooter";
-  if (/\b(dungeon|crypt|cave|tomb|crawler)/.test(p)) return "dungeon";
-  if (/\b(horror|haunted|zombie|ghost)/.test(p)) return "horror";
-  if (/\b(survival|craft|desert|sandbox)/.test(p)) return "survival";
-  if (/\b(forest|ruin|explore|adventure|nature|grove)/.test(p)) return "exploration";
-  return "sandbox";
+  return detectDeclaredGenre(p) ?? scoreGenre(p);
 }

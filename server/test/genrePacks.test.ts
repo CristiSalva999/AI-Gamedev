@@ -9,6 +9,28 @@ describe("genre packs", () => {
     expect(inferGenreKind("Build an arcade racing game")).toBe("racing");
   });
 
+  it("honors an explicitly declared genre over incidental keywords", () => {
+    // "drifting" (pollen/seeds/clouds) must not flip a survival game to racing.
+    const prompt =
+      'Create a survival game called "Meadow Days" with pollen drifting in ' +
+      "sunbeams, dandelion seeds drifting on the wind, and soft clouds drifting by. " +
+      "Objective: explore the meadow and survive.";
+    expect(inferGenreKind(prompt)).toBe("survival");
+  });
+
+  it("declares survival/exploration/shooter game types", () => {
+    expect(inferGenreKind("make a cozy survival game about a pig")).toBe("survival");
+    expect(inferGenreKind("Create a forest exploration game with ruins")).toBe("exploration");
+    expect(inferGenreKind("build a neon fps shooter game")).toBe("shooter");
+  });
+
+  it("falls back to weighted scoring when no genre is declared", () => {
+    // Many survival signals, only an incidental 'drifting' → survival, not racing.
+    expect(
+      inferGenreKind("a world where you scavenge, manage hunger and thirst, and survive the night while leaves keep drifting"),
+    ).toBe("survival");
+  });
+
   it("builds a cinematic forest exploration pack", () => {
     const pack = pickGenrePack("Create a forest exploration game with ruins");
     expect(pack.kind).toBe("exploration");
