@@ -4,10 +4,13 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
+  buildPrefab,
+  prefabForBrief,
   type Asset,
   type AssetSpec,
   type GameContext,
   type GenerationSource,
+  type PrefabKind,
   type PrimitiveShape,
 } from "@ai-gamedev/shared";
 import { generatePrompt } from "../prompts.js";
@@ -174,18 +177,65 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
 /** Deterministic brief -> geometry mapping (pure, easily testable). */
 export function deriveSpec(brief: string, context: GameContext): AssetSpec {
   const lower = brief.toLowerCase();
+  const scale = sizeMultiplier(lower);
+  const prefab = prefabForBrief(brief);
+  const colorOverride = matchKeyword(lower, COLOR_KEYWORDS);
+
+  if (prefab !== "primitive") {
+    return specFromPrefab(prefab, scale, colorOverride);
+  }
+
   const shape = matchKeyword(lower, SHAPE_KEYWORDS) ?? "box";
   const color =
-    matchKeyword(lower, COLOR_KEYWORDS) ??
+    colorOverride ??
     pickFromPalette(brief, context.colorPalette);
 
-  const scale = sizeMultiplier(lower);
   return {
     shape,
     color,
     size: { x: scale, y: scale, z: scale },
     roughness: 0.7,
     metalness: color === "#ffd700" || color === "#9aa0a6" ? 0.6 : 0.1,
+    prefab: "primitive",
+    parts: [
+      {
+        shape,
+        color,
+        size: { x: scale, y: scale, z: scale },
+        offset: { x: 0, y: scale / 2, z: 0 },
+        roughness: 0.7,
+        metalness: color === "#ffd700" || color === "#9aa0a6" ? 0.6 : 0.1,
+      },
+    ],
+  };
+}
+
+function specFromPrefab(
+  kind: PrefabKind,
+  scale: number,
+  colorOverride?: string,
+): AssetSpec {
+  const def = buildPrefab(kind, scale);
+  const metalness =
+    colorOverride === "#ffd700" || colorOverride === "#9aa0a6"
+      ? 0.6
+      : def.metalness;
+  const parts = colorOverride
+    ? def.parts.map((part, index) =>
+        // Tint the dominant body part; keep moss/emissive accents untouched.
+        index === 0 || !part.emissive
+          ? { ...part, color: colorOverride, metalness }
+          : part,
+      )
+    : def.parts;
+  return {
+    shape: def.shape,
+    color: colorOverride ?? def.color,
+    size: def.size,
+    roughness: def.roughness,
+    metalness,
+    prefab: def.kind,
+    parts,
   };
 }
 

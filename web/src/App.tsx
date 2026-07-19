@@ -286,7 +286,7 @@ export function App(): JSX.Element {
         <div className="viewport" ref={containerRef} />
         <div className="hud">
           {blueprint
-            ? "Click preview · WASD / arrows to move · drag to orbit"
+            ? "Click preview · WASD to explore · E to collect · drag to orbit"
             : "Your game preview will appear here as the build streams"}
         </div>
       </main>

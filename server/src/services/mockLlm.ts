@@ -60,6 +60,37 @@ function mockDialogue(prompt: string): string {
 
 function mockWorld(prompt: string): string {
   const location = extractQuoted(prompt, "Forgotten Grove");
+  const forest = /forest|ruin|grove|woodland|nature|jungle/i.test(prompt);
+  if (forest) {
+    return JSON.stringify(
+      {
+        description: `${location} is a sun-dappled forest clearing. A cracked stone path leads north to moss-eaten ruins — an archway, a toppled guardian statue, and a well that still holds cold water.`,
+        keyAssets: [
+          "broken stone archway",
+          "glowing moss patches",
+          "ancient well",
+          "toppled statue",
+          "wooden supply crate",
+          "gnarled hollow tree",
+          "fallen stone column",
+          "ruin wall",
+        ],
+        environment: {
+          lighting: "dappled daylight",
+          atmosphere: "birds overhead, soft mist between the trees",
+        },
+        npcs: ["wandering herbalist"],
+        interactive: [
+          "ancient well",
+          "wooden supply crate",
+          "glowing moss patches",
+        ],
+        loot: ["moonpetal", "rusted key", "healing tonic", "glowing moss"],
+      },
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       description: `${location} is a hushed clearing where bioluminescent moss reclaims ruined stonework. Mist pools between fallen columns.`,
@@ -73,7 +104,7 @@ function mockWorld(prompt: string): string {
       ],
       environment: { lighting: "cool moonlight", atmosphere: "misty, quiet" },
       npcs: ["wandering herbalist"],
-      interactive: ["ancient well (draw water)", "supply crate (loot)"],
+      interactive: ["ancient well", "wooden supply crate"],
       loot: ["moonpetal", "rusted key", "healing tonic"],
     },
     null,

@@ -37,14 +37,19 @@ describe("runBuild", () => {
     }
 
     const blueprint = lastBlueprint(events);
-    expect(blueprint.entities.length).toBeGreaterThan(0);
+    expect(blueprint.entities.length).toBeGreaterThan(12);
     expect(blueprint.scripts["gameplay.ts"]).toBeTruthy();
     expect(blueprint.player.speed).toBeGreaterThan(0);
     expect(Object.keys(blueprint.animations).length).toBeGreaterThan(0);
     expect(blueprint.player.animations.idle).toBeTruthy();
     expect(blueprint.player.animations.walk).toBeTruthy();
-    // Forest theme -> daylight.
+    // Forest theme -> daylight with a larger explorable ground.
     expect(blueprint.environment.lighting).toBe("day");
+    expect(blueprint.environment.worldRadius).toBeGreaterThan(15);
+    expect(blueprint.entities.some((e) => e.spec.prefab === "stone_arch")).toBe(true);
+    expect(blueprint.entities.some((e) => e.spec.parts && e.spec.parts.length > 1)).toBe(true);
+    expect(blueprint.entities.some((e) => e.interactive)).toBe(true);
+    expect(blueprint.mechanics).toContain("collect");
   });
 
   it("emits incremental asset sneak peeks and a build artifact", async () => {

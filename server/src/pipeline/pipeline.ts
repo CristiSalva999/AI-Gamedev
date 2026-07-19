@@ -17,6 +17,7 @@ import {
   deriveTheme,
   deriveTitle,
   moodLabel,
+  planLevelPlacements,
   playerFor,
   ringPosition,
   slugify,
@@ -35,11 +36,14 @@ export interface PipelineDeps {
 export interface PipelineOptions {
   /** Artificial delay between package steps for a nicer stream (0 in tests). */
   delayMs?: number;
-  /** Cap on generated entities to keep scenes readable. */
+  /** Cap on landmark entities streamed during the assets stage. */
   maxAssets?: number;
+  /** Cap on ambient filler props (trees, bushes, rubble…). */
+  maxAmbient?: number;
 }
 
-const MAX_ASSETS_DEFAULT = 6;
+const MAX_LANDMARKS_DEFAULT = 8;
+const MAX_AMBIENT_DEFAULT = 18;
 
 const sleep = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
@@ -73,7 +77,8 @@ export async function* runBuild(
   options: PipelineOptions = {},
 ): AsyncGenerator<BuildEvent> {
   const delayMs = options.delayMs ?? 0;
-  const maxAssets = options.maxAssets ?? MAX_ASSETS_DEFAULT;
+  const maxLandmarks = options.maxAssets ?? MAX_LANDMARKS_DEFAULT;
+  const maxAmbient = options.maxAmbient ?? MAX_AMBIENT_DEFAULT;
 
   const theme = deriveTheme(prompt);
   const title = deriveTitle(prompt);
@@ -90,7 +95,7 @@ export async function* runBuild(
     environment: { ...theme.environment },
     entities: [],
     player: playerFor(theme),
-    mechanics: ["move", "explore", "interact"],
+    mechanics: ["move", "explore", "interact", "collect"],
     scripts: {},
     animations: {},
     createdAt: timestamp,
@@ -134,31 +139,47 @@ export async function* runBuild(
   const assetOutputDir = deps.assetsDir
     ? `${deps.assetsDir}/${slug}/assets`
     : undefined;
-  const briefs = world.assets.slice(0, maxAssets);
-  for (let i = 0; i < briefs.length; i++) {
-    const brief = briefs[i];
-    const { asset } = await deps.assetGenerator.generate(brief, context, {
+  const placements = planLevelPlacements(theme, world.assets, world.interactive, {
+    maxLandmarks,
+    maxAmbient,
+  });
+
+  for (let i = 0; i < placements.length; i++) {
+    const planned = placements[i];
+    const { asset } = await deps.assetGenerator.generate(planned.brief, context, {
       outputDir: assetOutputDir,
     });
-    const interactive = world.interactive.has(brief.toLowerCase()) || i < 2;
-    const behavior = behaviorFor(interactive, i);
+    const behavior = behaviorFor(planned.role, planned.interactive, i, planned.brief);
     const entity: BlueprintEntity = {
       id: asset.id,
       name: asset.name,
       spec: asset.spec,
-      position: ringPosition(i, briefs.length),
+      position: planned.position,
+      rotationY: planned.rotationY,
       behavior,
-      interactive,
+      interactive: planned.interactive,
+      role: planned.role,
+      interactHint: planned.interactHint,
     };
     blueprint.entities.push(entity);
     blueprint.updatedAt = Date.now();
-    yield {
-      type: "sneak-peek",
-      stage: "assets",
-      note: `Modeled "${asset.name}" → ${asset.spec.shape} (${asset.spec.color})${asset.source ? " · .glb" : ""}${interactive ? " · interactive" : ""}.`,
-      blueprint: clone(blueprint),
-    };
-    await sleep(delayMs);
+
+    // Stream sneak peeks for landmarks; batch ambient fillers so the chat stays readable.
+    const isLandmark = planned.role === "landmark" || planned.role === "loot";
+    if (isLandmark || i === placements.length - 1) {
+      const prefabLabel = asset.spec.prefab && asset.spec.prefab !== "primitive"
+        ? asset.spec.prefab.replace(/_/g, " ")
+        : asset.spec.shape;
+      yield {
+        type: "sneak-peek",
+        stage: "assets",
+        note: isLandmark
+          ? `Modeled "${asset.name}" → ${prefabLabel} prefab${asset.source ? " · .glb" : ""}${planned.interactive ? " · interactive" : ""}.`
+          : `Dressed the level with ${blueprint.entities.length} set pieces (landmarks + forest fillers).`,
+        blueprint: clone(blueprint),
+      };
+      await sleep(delayMs);
+    }
   }
   yield { type: "stage-complete", stage: "assets" };
 
@@ -211,6 +232,13 @@ export async function* runBuild(
   // --- Stage: assemble -----------------------------------------------------
   yield { type: "stage-start", stage: "assemble", label: "Assembling scene" };
   blueprint.updatedAt = Date.now();
+  const interactiveCount = blueprint.entities.filter((e) => e.interactive).length;
+  yield {
+    type: "sneak-peek",
+    stage: "assemble",
+    note: `Assembled ${blueprint.entities.length} props (${interactiveCount} interactive). Walk the path to the ruins — press E near glowing props to collect.`,
+    blueprint: clone(blueprint),
+  };
   yield { type: "stage-complete", stage: "assemble" };
 
   // --- Stage: package (real git workspace + zip) ---------------------------
@@ -306,17 +334,25 @@ export async function* runSteer(
     for (let i = 0; i < count; i++) {
       const { asset } = await deps.assetGenerator.generate(addBrief, context);
       const index = blueprint.entities.length;
-      const behavior = behaviorFor(false, index);
+      const role = /\b(tree|bush|rock|boulder)\b/.test(addBrief) ? "ambient" as const : "landmark" as const;
+      const behavior = behaviorFor(role, false, index, addBrief);
       const clip = animationFor(behavior, asset.id);
       if (clip) blueprint.animations[clip.id] = clip;
+      const pos = ringPosition(index, index + 1);
+      const radius = blueprint.environment.worldRadius ?? 14;
       blueprint.entities.push({
         id: asset.id,
         name: asset.name,
         spec: asset.spec,
-        position: ringPosition(index, index + 1),
+        position: {
+          x: Number((pos.x * (radius / 8)).toFixed(2)),
+          y: 0,
+          z: Number((pos.z * (radius / 8)).toFixed(2)),
+        },
         behavior,
         animation: clip,
         interactive: false,
+        role,
       });
     }
     blueprint.updatedAt = Date.now();
@@ -410,7 +446,7 @@ function safeParseWorld(text: string): WorldPlan {
     const interactive = new Set(
       (Array.isArray(json.interactive) ? json.interactive : [])
         .filter((a): a is string => typeof a === "string")
-        .map((a) => a.toLowerCase()),
+        .map((a) => a.toLowerCase().replace(/\s*\(.*\)$/, "").trim()),
     );
     const env = json.environment as Record<string, unknown> | undefined;
     const atmosphere = typeof env?.atmosphere === "string" ? env.atmosphere : undefined;

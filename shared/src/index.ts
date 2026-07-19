@@ -4,6 +4,20 @@
  * two runtimes (DRY) and documents the pipeline's data model in one place.
  */
 
+export type {
+  MeshPart,
+  PrefabDefinition,
+  PrefabKind,
+  PrimitiveShape,
+} from "./prefabs.js";
+export {
+  buildPrefab,
+  prefabForBrief,
+  scalePrefab,
+} from "./prefabs.js";
+
+import type { MeshPart, PrefabKind, PrimitiveShape } from "./prefabs.js";
+
 // ---------------------------------------------------------------------------
 // Core entities
 // ---------------------------------------------------------------------------
@@ -35,20 +49,22 @@ export interface NPC {
   relationships: Record<string, string>;
 }
 
-export type PrimitiveShape = "box" | "sphere" | "cylinder" | "cone" | "torus";
-
 /**
- * Minimal, renderer-agnostic description of a generated asset. In the full
- * pipeline this is derived from Blender output; the mock generator produces it
- * directly so the viewport can render something meaningful offline.
+ * Renderer-agnostic description of a generated asset. Prefer `parts` (compound
+ * prefab) for readable set pieces; `shape` remains the single-primitive
+ * fallback used by simple exporters and older runners.
  */
 export interface AssetSpec {
   shape: PrimitiveShape;
   color: string;
-  /** Uniform-ish dimensions in world units. */
+  /** Bounding dimensions in world units (used for placement / collision). */
   size: { x: number; y: number; z: number };
   roughness: number;
   metalness: number;
+  /** Named prefab used to rebuild compound geometry. */
+  prefab?: PrefabKind;
+  /** Multi-mesh parts; when present the viewport builds a Group. */
+  parts?: MeshPart[];
 }
 
 export interface ConversationTurn {
@@ -131,19 +147,31 @@ export interface EnvironmentSpec {
   fog: boolean;
   groundColor: string;
   skyColor: string;
+  /** Half-extent of the playable ground plane (world units). */
+  worldRadius?: number;
+  /** Soft secondary ground tint for grass / dirt variation. */
+  accentGroundColor?: string;
 }
 
 export type EntityBehavior = "static" | "spin" | "bob" | "patrol" | "pulse";
+
+/** How an entity contributes to the level — drives motion and interaction. */
+export type EntityRole = "landmark" | "ambient" | "loot" | "path";
 
 export interface BlueprintEntity {
   id: string;
   name: string;
   spec: AssetSpec;
   position: { x: number; y: number; z: number };
+  /** Yaw in radians for oriented set pieces (arches, walls). */
+  rotationY?: number;
   behavior: EntityBehavior;
   /** Optional authored keyframe clip (drives the viewport beyond simple behaviors). */
   animation?: AnimationClip;
   interactive: boolean;
+  role?: EntityRole;
+  /** Short prompt shown when the player is near an interactive prop. */
+  interactHint?: string;
 }
 
 export interface PlayerSpec {
