@@ -436,6 +436,19 @@ export async function* runSteer(
     return yield* commit(blueprint, "assemble", "Cleared the scene.");
   }
 
+  const story = matchStoryEdit(message);
+  if (story) {
+    blueprint.pitch = story;
+    if (blueprint.design) {
+      blueprint.design = { ...blueprint.design, pitch: story };
+    }
+    return yield* commit(
+      blueprint,
+      "design",
+      `Updated the storyline: ${story}`,
+    );
+  }
+
   // Fallback: acknowledge conversationally without structural changes.
   const { text } = await deps.llm.generate(message, { task: "freeform" });
   yield {
@@ -577,6 +590,26 @@ function applyLightingColors(blueprint: GameBlueprint, mood: LightingMood): void
 function matchSpeed(text: string): { delta: number } | null {
   if (/\b(faster|quicker|speed up|zoom)\b/.test(text)) return { delta: 3 };
   if (/\b(slower|slow down)\b/.test(text)) return { delta: -3 };
+  return null;
+}
+
+/**
+ * Detect a storyline / plot / pitch rewrite and extract the new text. Matches
+ * either an explicit "storyline: ..." prefix or a "change/make the story ..."
+ * instruction so follow-ups can iterate on narrative, not just visuals.
+ */
+function matchStoryEdit(message: string): string | null {
+  const prefixed = message.match(
+    /^\s*(?:storyline|story|plot|pitch|lore|narrative)\s*[:-]\s*(.+)$/i,
+  );
+  if (prefixed) return prefixed[1].trim();
+
+  const instruction = message.match(
+    /\b(?:change|update|rewrite|set|make)\b.*\b(?:storyline|story|plot|pitch|narrative)\b\s*(?:to|:|so that|into)?\s*(.+)$/i,
+  );
+  if (instruction && instruction[1].trim().length > 3) {
+    return instruction[1].trim();
+  }
   return null;
 }
 
