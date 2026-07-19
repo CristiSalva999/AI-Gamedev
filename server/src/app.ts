@@ -1,6 +1,11 @@
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import {
+  type BuildEvent,
+  type ChatMessage,
+  type ChatRequest,
+  type GameBlueprint,
   type GameContext,
   type GenerateAssetRequest,
   type GenerateAssetResponse,
@@ -9,6 +14,7 @@ import {
   type HealthResponse,
   type NPC,
 } from "@ai-gamedev/shared";
+import { runBuild, runSteer, type PipelineOptions } from "./pipeline/pipeline.js";
 import { generatePrompt, SYSTEM_PROMPT } from "./prompts.js";
 import type { AssetGenerator } from "./services/assetGenerator.js";
 import type { ContextStore } from "./services/contextStore.js";
@@ -18,6 +24,8 @@ export interface AppDependencies {
   contextStore: ContextStore;
   llm: LLMClient;
   assetGenerator: AssetGenerator;
+  /** Pipeline tuning (e.g. streaming delays); overridable in tests. */
+  pipelineOptions?: PipelineOptions;
 }
 
 /**
@@ -25,7 +33,7 @@ export interface AppDependencies {
  * so tests can wire in fakes and run in isolation.
  */
 export function createApp(deps: AppDependencies): Express {
-  const { contextStore, llm, assetGenerator } = deps;
+  const { contextStore, llm, assetGenerator, pipelineOptions } = deps;
   const app = express();
 
   app.use(cors());
@@ -130,8 +138,86 @@ export function createApp(deps: AppDependencies): Express {
     }),
   );
 
+  // Chat-driven autonomous pipeline. Streams Server-Sent Events so the client
+  // can render progress and live "sneak peeks" of the game being built.
+  app.post("/api/chat", async (req: Request, res: Response) => {
+    const { message } = (req.body ?? {}) as ChatRequest;
+    if (!message || typeof message !== "string") {
+      res.status(400).json({ error: "Missing 'message' in request body" });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.flushHeaders?.();
+
+    let aborted = false;
+    // Detect real client disconnects on the response; the request stream can
+    // emit "close" early (once its body is consumed), which would abort too soon.
+    res.on("close", () => {
+      aborted = true;
+    });
+
+    const send = (event: BuildEvent): void => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    try {
+      const context = await contextStore.load();
+      context.chat.push(chatMessage("user", message));
+
+      const build = !context.blueprint || isBuildRequest(message);
+      const events = build
+        ? runBuild(message, { llm, assetGenerator }, pipelineOptions)
+        : runSteer(message, context.blueprint as GameBlueprint, {
+            llm,
+            assetGenerator,
+          });
+
+      let latest: GameBlueprint | undefined = context.blueprint;
+      for await (const event of events) {
+        if (aborted) break;
+        if (event.type === "sneak-peek" || event.type === "done") {
+          latest = event.blueprint;
+        }
+        if (event.type === "message") {
+          context.chat.push(chatMessage("assistant", event.content));
+        }
+        send(event);
+      }
+
+      if (!aborted) {
+        context.blueprint = latest;
+        // Bound the persisted transcript so the file stays small.
+        context.chat = context.chat.slice(-50);
+        await contextStore.save(context);
+      }
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Pipeline failed";
+      console.error("[server] pipeline failed:", messageText);
+      if (!aborted) send({ type: "error", message: messageText });
+    } finally {
+      res.end();
+    }
+  });
+
   app.use(errorHandler);
   return app;
+}
+
+/** Heuristic: does this message ask to start a brand-new game build? */
+function isBuildRequest(message: string): boolean {
+  const m = message.toLowerCase();
+  const wantsNew = /\b(create|make|build|generate|start|new|prototype|design)\b/.test(m);
+  const mentionsGame = /\bgame|level|world|rpg|shooter|platformer\b/.test(m);
+  return wantsNew && mentionsGame;
+}
+
+function chatMessage(role: ChatMessage["role"], content: string): ChatMessage {
+  return { id: randomUUID(), role, content, at: Date.now() };
 }
 
 function buildPrompt(payload: GenerateRequest, context: GameContext): string | null {

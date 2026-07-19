@@ -1,159 +1,221 @@
-import { useCallback, useEffect, useState } from "react";
-import type { GameContext, GenerationSource } from "@ai-gamedev/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  BuildEvent,
+  BuildManifest,
+  GameBlueprint,
+  GenerationSource,
+} from "@ai-gamedev/shared";
 import { api } from "./lib/api.js";
 import { useThreeScene } from "./hooks/useThreeScene.js";
 
-interface LogEntry {
+type LineKind = "user" | "assistant" | "stage" | "peek" | "artifact" | "error";
+
+interface ChatLine {
   id: number;
-  kind: "asset" | "dialogue" | "info" | "error";
+  kind: LineKind;
   text: string;
   source?: GenerationSource;
 }
 
-let logSeq = 0;
+let lineSeq = 0;
+
+const BUILD_SUGGESTIONS = [
+  "Create a forest exploration game with ruins",
+  "Build a neon sci-fi shooter on a space station",
+  "Make a spooky dungeon crawler",
+];
+
+const STEER_SUGGESTIONS = ["make it night", "add more crates", "player faster", "make it day"];
 
 export function App(): JSX.Element {
-  const { containerRef, addAsset, clear } = useThreeScene();
-  const [context, setContext] = useState<GameContext | null>(null);
+  const { containerRef, setBlueprint } = useThreeScene();
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [input, setInput] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [blueprint, setBlueprintState] = useState<GameBlueprint | null>(null);
+  const [manifest, setManifest] = useState<BuildManifest | null>(null);
   const [llmReachable, setLlmReachable] = useState<boolean | null>(null);
-  const [model, setModel] = useState<string>("");
-  const [brief, setBrief] = useState("wooden crate");
-  const [playerAction, setPlayerAction] = useState("offers a rare herb");
-  const [busy, setBusy] = useState(false);
-  const [log, setLog] = useState<LogEntry[]>([]);
+  const [model, setModel] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const pushLog = useCallback((entry: Omit<LogEntry, "id">) => {
-    setLog((prev) => [{ id: logSeq++, ...entry }, ...prev].slice(0, 40));
+  const pushLine = useCallback((line: Omit<ChatLine, "id">) => {
+    setLines((prev) => [...prev, { id: lineSeq++, ...line }]);
   }, []);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [lines]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [health, ctx] = await Promise.all([
-          api.health(),
-          api.getContext(),
-        ]);
+        const [health, ctx] = await Promise.all([api.health(), api.getContext()]);
         if (cancelled) return;
         setLlmReachable(health.llm.reachable);
         setModel(health.llm.model);
-        setContext(ctx);
-        // Render any assets that already live in the persisted context.
-        for (const asset of Object.values(ctx.assets.models)) addAsset(asset.spec);
-        pushLog({
-          kind: "info",
+        if (ctx.blueprint) {
+          setBlueprint(ctx.blueprint);
+          setBlueprintState(ctx.blueprint);
+        }
+        for (const msg of ctx.chat) {
+          pushLine({ kind: msg.role === "user" ? "user" : "assistant", text: msg.content });
+        }
+        pushLine({
+          kind: "assistant",
           text: health.llm.reachable
-            ? `Connected to LM Studio (${health.llm.model}).`
-            : `LM Studio not reachable — using deterministic mock (${health.llm.model}).`,
+            ? `Connected to LM Studio (${health.llm.model}). Describe a game and I'll build it.`
+            : `Ready in offline mock mode (${health.llm.model}). Describe a game and I'll build it — e.g. "${BUILD_SUGGESTIONS[0]}".`,
         });
       } catch (err) {
-        if (!cancelled) {
-          pushLog({ kind: "error", text: `Init failed: ${(err as Error).message}` });
-        }
+        if (!cancelled) pushLine({ kind: "error", text: `Init failed: ${(err as Error).message}` });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [addAsset, pushLog]);
+  }, [setBlueprint, pushLine]);
 
-  const onGenerateAsset = useCallback(async () => {
-    if (!brief.trim()) return;
-    setBusy(true);
-    try {
-      const res = await api.generateAsset(brief.trim());
-      addAsset(res.asset.spec);
-      pushLog({
-        kind: "asset",
-        source: res.source,
-        text: `Asset "${res.asset.name}" → ${res.asset.spec.shape} (${res.asset.spec.color}).`,
-      });
-    } catch (err) {
-      pushLog({ kind: "error", text: `Asset failed: ${(err as Error).message}` });
-    } finally {
-      setBusy(false);
-    }
-  }, [brief, addAsset, pushLog]);
+  const handleEvent = useCallback(
+    (event: BuildEvent) => {
+      switch (event.type) {
+        case "message":
+          pushLine({ kind: "assistant", text: event.content });
+          break;
+        case "stage-start":
+          pushLine({ kind: "stage", text: `▶ ${event.label}` });
+          break;
+        case "sneak-peek":
+          pushLine({ kind: "peek", text: event.note });
+          setBlueprint(event.blueprint);
+          setBlueprintState(event.blueprint);
+          break;
+        case "stage-complete":
+          break;
+        case "artifact":
+          setManifest(event.manifest);
+          pushLine({
+            kind: "artifact",
+            text: `Packaged "${event.manifest.name}" on ${event.manifest.branch} · ${event.manifest.entityCount} objects · ~${event.manifest.approxSizeKb} KB`,
+          });
+          break;
+        case "done":
+          setBlueprint(event.blueprint);
+          setBlueprintState(event.blueprint);
+          break;
+        case "error":
+          pushLine({ kind: "error", text: event.message });
+          break;
+        default: {
+          // Exhaustiveness guard: new BuildEvent variants must be handled.
+          const _never: never = event;
+          return _never;
+        }
+      }
+    },
+    [pushLine, setBlueprint],
+  );
 
-  const onGenerateDialogue = useCallback(async () => {
-    setBusy(true);
-    try {
-      const res = await api.generate({
-        task: "npcDialogue",
-        params: { playerAction },
-      });
-      pushLog({ kind: "dialogue", source: res.source, text: res.text });
-    } catch (err) {
-      pushLog({ kind: "error", text: `Dialogue failed: ${(err as Error).message}` });
-    } finally {
-      setBusy(false);
-    }
-  }, [playerAction, pushLog]);
+  const send = useCallback(
+    async (message: string) => {
+      const text = message.trim();
+      if (!text || building) return;
+      setInput("");
+      pushLine({ kind: "user", text });
+      setBuilding(true);
+      try {
+        await api.chat(text, handleEvent);
+      } catch (err) {
+        pushLine({ kind: "error", text: `Build failed: ${(err as Error).message}` });
+      } finally {
+        setBuilding(false);
+      }
+    },
+    [building, handleEvent, pushLine],
+  );
 
-  const npcName =
-    context && Object.values(context.assets.characters)[0]?.name;
+  const downloadBlueprint = useCallback(() => {
+    if (!blueprint) return;
+    const blob = new Blob([JSON.stringify(blueprint, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${blueprint.gameTitle.replace(/\s+/g, "_").toLowerCase()}.aigame.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [blueprint]);
+
+  const suggestions = useMemo(
+    () => (blueprint ? STEER_SUGGESTIONS : BUILD_SUGGESTIONS),
+    [blueprint],
+  );
 
   return (
     <div className="layout">
       <aside className="panel">
-        <h1>AI GameDev</h1>
-        <p className="subtitle">Three.js viewport · local LLM · mock Blender</p>
+        <header className="brand">
+          <h1>AI GameDev</h1>
+          <StatusBadge reachable={llmReachable} model={model} />
+        </header>
 
-        <StatusBadge reachable={llmReachable} model={model} />
-
-        {context && (
-          <section className="card">
-            <h2>{context.gameTitle}</h2>
-            <p className="muted">
-              {context.gameGenre} · {context.visualStyle}
-            </p>
-            {context.currentMission && (
-              <p className="mission">Mission: {context.currentMission}</p>
-            )}
-          </section>
+        {blueprint && (
+          <div className="game-head">
+            <div>
+              <strong>{blueprint.gameTitle}</strong>
+              <span className="muted"> · {blueprint.gameGenre}</span>
+            </div>
+            <button className="link" onClick={downloadBlueprint} disabled={!manifest}>
+              ⤓ blueprint
+            </button>
+          </div>
         )}
 
-        <section className="card">
-          <h3>Generate asset (mock Blender)</h3>
-          <input
-            value={brief}
-            onChange={(e) => setBrief(e.target.value)}
-            placeholder="e.g. golden chest, stone pillar"
-          />
-          <button onClick={onGenerateAsset} disabled={busy}>
-            {busy ? "Working…" : "Generate & render"}
-          </button>
-          <button className="ghost" onClick={clear} disabled={busy}>
-            Clear scene
-          </button>
-        </section>
+        <div className="chat" ref={scrollRef}>
+          {lines.map((line) => (
+            <div key={line.id} className={`line ${line.kind}`}>
+              {line.text}
+            </div>
+          ))}
+          {building && <div className="line stage pulse">building…</div>}
+        </div>
 
-        <section className="card">
-          <h3>NPC dialogue{npcName ? ` · ${npcName}` : ""}</h3>
-          <input
-            value={playerAction}
-            onChange={(e) => setPlayerAction(e.target.value)}
-            placeholder="player action"
-          />
-          <button onClick={onGenerateDialogue} disabled={busy}>
-            {busy ? "Working…" : "Ask the LLM"}
-          </button>
-        </section>
+        <div className="suggestions">
+          {suggestions.map((s) => (
+            <button key={s} className="chip" onClick={() => void send(s)} disabled={building}>
+              {s}
+            </button>
+          ))}
+        </div>
 
-        <section className="card log">
-          <h3>Activity</h3>
-          <ul>
-            {log.map((entry) => (
-              <li key={entry.id} className={entry.kind}>
-                {entry.source && <span className={`tag ${entry.source}`}>{entry.source}</span>}
-                {entry.text}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <form
+          className="composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send(input);
+          }}
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={blueprint ? "Steer the build…" : "Describe a game to create…"}
+            disabled={building}
+          />
+          <button type="submit" disabled={building || !input.trim()}>
+            {building ? "…" : "Send"}
+          </button>
+        </form>
       </aside>
 
-      <div className="viewport" ref={containerRef} />
+      <main className="viewport-wrap">
+        <div className="viewport" ref={containerRef} />
+        <div className="hud">
+          {blueprint
+            ? "WASD / arrows to move · drag to orbit"
+            : "Your game preview will appear here"}
+        </div>
+      </main>
     </div>
   );
 }
@@ -165,13 +227,8 @@ function StatusBadge({
   reachable: boolean | null;
   model: string;
 }): JSX.Element {
-  const state =
-    reachable === null ? "pending" : reachable ? "online" : "mock";
+  const state = reachable === null ? "pending" : reachable ? "online" : "mock";
   const label =
-    reachable === null
-      ? "Checking LLM…"
-      : reachable
-        ? `LLM online: ${model}`
-        : `Mock mode (${model})`;
-  return <div className={`status ${state}`}>{label}</div>;
+    reachable === null ? "…" : reachable ? `LLM: ${model}` : "mock mode";
+  return <span className={`status ${state}`}>{label}</span>;
 }

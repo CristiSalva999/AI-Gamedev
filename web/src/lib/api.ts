@@ -1,10 +1,12 @@
 import type {
+  BuildEvent,
   GameContext,
   GenerateAssetResponse,
   GenerateRequest,
   GenerateResponse,
   HealthResponse,
 } from "@ai-gamedev/shared";
+import { parseSseBuffer } from "./sse.js";
 
 /**
  * Thin, typed client for the orchestration API. Uses same-origin `/api/*`
@@ -42,4 +44,36 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ brief }),
     }),
+
+  /**
+   * Sends a chat message and streams the autonomous pipeline's build events.
+   * `onEvent` is called for each event as it arrives.
+   */
+  chat: async (
+    message: string,
+    onEvent: (event: BuildEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const res = await fetch(`${BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`Chat request failed: ${res.status} ${res.statusText}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const { data, rest } = parseSseBuffer(buffer);
+      buffer = rest;
+      for (const payload of data) onEvent(JSON.parse(payload) as BuildEvent);
+    }
+  },
 };

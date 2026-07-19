@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
 import type { GameContext } from "@ai-gamedev/shared";
+import type { BuildEvent } from "@ai-gamedev/shared";
 import { createApp } from "../src/app.js";
 import { MockBlenderAssetGenerator } from "../src/services/assetGenerator.js";
-import { FakeLLMClient, InMemoryContextStore } from "./support/fakes.js";
+import {
+  FakeLLMClient,
+  InMemoryContextStore,
+  LocalMockLLMClient,
+} from "./support/fakes.js";
+
+function parseSse(body: string): BuildEvent[] {
+  return body
+    .split("\n\n")
+    .map((block) => block.replace(/^data: /, "").trim())
+    .filter(Boolean)
+    .map((json) => JSON.parse(json) as BuildEvent);
+}
 
 function buildApp(llm = new FakeLLMClient()) {
   const contextStore = new InMemoryContextStore();
@@ -96,6 +109,54 @@ describe("POST /api/generate-asset", () => {
   it("returns 400 when brief is missing", async () => {
     const { app } = buildApp();
     const res = await request(app).post("/api/generate-asset").send({});
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/chat", () => {
+  function buildChatApp() {
+    const llm = new LocalMockLLMClient();
+    const contextStore = new InMemoryContextStore();
+    const assetGenerator = new MockBlenderAssetGenerator(llm);
+    const app = createApp({ contextStore, llm, assetGenerator });
+    return { app };
+  }
+
+  it("streams an autonomous build and persists the blueprint", async () => {
+    const { app } = buildChatApp();
+
+    const res = await request(app)
+      .post("/api/chat")
+      .send({ message: "create a dungeon crawler game" });
+
+    expect(res.status).toBe(200);
+    const events = parseSse(res.text);
+    expect(events.some((e) => e.type === "artifact")).toBe(true);
+    const done = events.find((e) => e.type === "done");
+    expect(done?.type).toBe("done");
+
+    const ctx = await request(app).get("/api/context");
+    expect(ctx.body.blueprint).toBeTruthy();
+    expect(ctx.body.blueprint.entities.length).toBeGreaterThan(0);
+    expect(ctx.body.chat.length).toBeGreaterThan(0);
+  });
+
+  it("steers an existing build instead of rebuilding", async () => {
+    const { app } = buildChatApp();
+    await request(app).post("/api/chat").send({ message: "create a forest game" });
+
+    const res = await request(app).post("/api/chat").send({ message: "make it night" });
+    const events = parseSse(res.text);
+    const done = events.find((e) => e.type === "done");
+    expect(done?.type).toBe("done");
+    if (done?.type === "done") {
+      expect(done.blueprint.environment.lighting).toBe("night");
+    }
+  });
+
+  it("returns 400 when message is missing", async () => {
+    const { app } = buildChatApp();
+    const res = await request(app).post("/api/chat").send({});
     expect(res.status).toBe(400);
   });
 });

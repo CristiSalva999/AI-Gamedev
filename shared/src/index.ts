@@ -84,6 +84,104 @@ export interface GameContext {
   pendingTasks: string[];
 
   conversationMemory: ConversationTurn[];
+
+  /** The most recently built game, rendered by the viewport. */
+  blueprint?: GameBlueprint;
+  /** Persisted chat transcript that drives the autonomous pipeline. */
+  chat: ChatMessage[];
+}
+
+// ---------------------------------------------------------------------------
+// Game blueprint (the buildable, renderable output of the pipeline)
+// ---------------------------------------------------------------------------
+
+export type LightingMood = "day" | "dusk" | "night" | "cave";
+
+export interface EnvironmentSpec {
+  lighting: LightingMood;
+  atmosphere: string;
+  fog: boolean;
+  groundColor: string;
+  skyColor: string;
+}
+
+export type EntityBehavior = "static" | "spin" | "bob" | "patrol";
+
+export interface BlueprintEntity {
+  id: string;
+  name: string;
+  spec: AssetSpec;
+  position: { x: number; y: number; z: number };
+  behavior: EntityBehavior;
+  interactive: boolean;
+}
+
+export interface PlayerSpec {
+  color: string;
+  /** Movement speed in world units per second. */
+  speed: number;
+  spawn: { x: number; y: number; z: number };
+}
+
+export interface GameBlueprint {
+  gameTitle: string;
+  gameGenre: string;
+  visualStyle: string;
+  colorPalette: string[];
+  pitch: string;
+  environment: EnvironmentSpec;
+  entities: BlueprintEntity[];
+  player: PlayerSpec;
+  mechanics: string[];
+  scripts: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Autonomous build pipeline (chat-driven)
+// ---------------------------------------------------------------------------
+
+export type BuildStage =
+  | "design"
+  | "world"
+  | "assets"
+  | "scripts"
+  | "player"
+  | "assemble"
+  | "package";
+
+export interface BuildManifest {
+  name: string;
+  branch: string;
+  entityCount: number;
+  assetCount: number;
+  scriptCount: number;
+  approxSizeKb: number;
+}
+
+/**
+ * Streamed pipeline event. The frontend renders these as chat updates and live
+ * "sneak peeks" of the game being built. Discriminated on `type`.
+ */
+export type BuildEvent =
+  | { type: "message"; role: "assistant"; content: string }
+  | { type: "stage-start"; stage: BuildStage; label: string }
+  | { type: "sneak-peek"; stage: BuildStage; note: string; blueprint: GameBlueprint }
+  | { type: "stage-complete"; stage: BuildStage }
+  | { type: "artifact"; manifest: BuildManifest }
+  | { type: "done"; blueprint: GameBlueprint }
+  | { type: "error"; message: string };
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  at: number;
+}
+
+export interface ChatRequest {
+  message: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +253,7 @@ export function createDefaultContext(
     completedTasks: [],
     pendingTasks: [],
     conversationMemory: [],
+    chat: [],
     ...overrides,
   };
 }

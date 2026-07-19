@@ -9,6 +9,7 @@ import type {
   GenerateResult,
   LLMClient,
 } from "../../src/services/llmClient.js";
+import { mockCompletion } from "../../src/services/mockLlm.js";
 
 /** In-memory {@link ContextStore} for isolated route tests. */
 export class InMemoryContextStore implements ContextStore {
@@ -55,5 +56,25 @@ export class FakeLLMClient implements LLMClient {
 
   async ping(): Promise<boolean> {
     return this.reachable;
+  }
+}
+
+/**
+ * LLM fake backed by the real offline mock, so pipeline tests exercise the same
+ * task-aware output (e.g. valid world-building JSON) without any network.
+ */
+export class LocalMockLLMClient implements LLMClient {
+  readonly model = "mock-model";
+  readonly baseUrl = "http://mock.local/v1";
+
+  async generate(
+    prompt: string,
+    options?: GenerateOptions,
+  ): Promise<GenerateResult> {
+    return { text: mockCompletion(prompt, options?.task), source: "mock" };
+  }
+
+  async ping(): Promise<boolean> {
+    return false;
   }
 }

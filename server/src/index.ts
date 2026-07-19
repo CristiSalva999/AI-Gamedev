@@ -12,7 +12,13 @@ function main(): void {
   const contextStore = new FileContextStore(config.dataDir);
   const assetGenerator = new MockBlenderAssetGenerator(llm);
 
-  const app = createApp({ contextStore, llm, assetGenerator });
+  // A small delay makes the streamed "sneak peeks" feel deliberate in the UI.
+  const app = createApp({
+    contextStore,
+    llm,
+    assetGenerator,
+    pipelineOptions: { delayMs: 140 },
+  });
 
   app.listen(config.port, () => {
     console.log(`[server] AI GameDev orchestrator listening on :${config.port}`);
