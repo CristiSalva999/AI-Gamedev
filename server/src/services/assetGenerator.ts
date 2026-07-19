@@ -129,7 +129,7 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
     }
 
     const prompt = generatePrompt.modelGeneration(brief, context);
-    const { text: blenderScript } = await this.llm.generate(prompt, {
+    const { text: blenderScript, source } = await this.llm.generate(prompt, {
       task: "modelGeneration",
     });
     const fidelity = options.fidelity ?? "cinematic";
@@ -138,8 +138,14 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
     const glbPath = path.join(options.outputDir, `${id}.glb`);
     const scriptPath = path.join(options.outputDir, `${id}.py`);
 
-    // Harden: only run our own generated script file, never shell-interpolated.
-    const safeScript = sanitizeBlenderScript(blenderScript, glbPath, spec);
+    // With a real model, run its authored script (but force a correct export);
+    // offline, drive Blender from the derived spec so it builds the actual
+    // multi-part prefab geometry rather than a generic placeholder. Either way
+    // Blender is the tool that authors and exports the .glb.
+    const safeScript =
+      source === "llm"
+        ? sanitizeBlenderScript(blenderScript, glbPath, spec)
+        : buildAssetBlenderScript(spec, glbPath, brief);
     await writeText(scriptPath, safeScript);
 
     try {
@@ -255,8 +261,10 @@ function specFromPrefab(
 }
 
 /**
- * Ensures Blender scripts are self-contained and export to the intended path.
- * If the LLM output looks unsafe or incomplete, emit a known-good bpy script.
+ * Ensures author-provided (LLM) Blender scripts are self-contained and export
+ * to the intended path/format. Unsafe or empty scripts fall back to a known-good
+ * spec-driven script. Any export the author wrote is stripped and replaced with
+ * ours so the .glb always lands at `glbPath` as a valid GLB.
  */
 function sanitizeBlenderScript(
   code: string,
@@ -268,41 +276,90 @@ function sanitizeBlenderScript(
       code,
     );
   if (dangerous || !code.includes("bpy") || code.length < 40) {
-    return defaultBlenderScript(glbPath, spec);
+    return buildAssetBlenderScript(spec, glbPath);
   }
-  // Append an explicit export so LLM scripts without one still produce a file.
-  if (!code.includes("export_scene.gltf") && !code.includes("gltf")) {
-    return `${code.trim()}\n\nimport bpy\nbpy.ops.export_scene.gltf(filepath=r"${glbPath}", export_format='GLB')\n`;
-  }
-  return code;
+  const body = code
+    .split("\n")
+    .filter((line) => !line.includes("export_scene.gltf"))
+    .join("\n")
+    .trim();
+  return `${body}\n\nimport bpy\nbpy.ops.export_scene.gltf(filepath=r"${glbPath}", export_format='GLB')\n`;
 }
 
-function defaultBlenderScript(glbPath: string, spec: AssetSpec): string {
-  const op =
-    spec.shape === "sphere"
-      ? "primitive_uv_sphere_add"
-      : spec.shape === "cylinder"
-        ? "primitive_cylinder_add"
-        : spec.shape === "cone"
-          ? "primitive_cone_add"
-          : spec.shape === "torus"
-            ? "primitive_torus_add"
-            : "primitive_cube_add";
-  return `import bpy
-bpy.ops.object.select_all(action='SELECT')
-bpy.ops.object.delete(use_global=False)
-bpy.ops.mesh.${op}(size=${Math.max(spec.size.x, 0.5)})
-obj = bpy.context.active_object
-mat = bpy.data.materials.new(name="Mat")
-mat.use_nodes = True
-bsdf = mat.node_tree.nodes.get("Principled BSDF")
-if bsdf:
-    bsdf.inputs["Base Color"].default_value = (1, 1, 1, 1)
-    bsdf.inputs["Metallic"].default_value = ${spec.metalness}
-    bsdf.inputs["Roughness"].default_value = ${spec.roughness}
-obj.data.materials.append(mat)
-bpy.ops.export_scene.gltf(filepath=r"${glbPath}", export_format='GLB')
-`;
+const PRIMITIVE_OP: Record<PrimitiveShape, string> = {
+  sphere: "primitive_uv_sphere_add",
+  cylinder: "primitive_cylinder_add",
+  cone: "primitive_cone_add",
+  torus: "primitive_torus_add",
+  box: "primitive_cube_add",
+};
+
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return [0.8, 0.8, 0.8];
+  const n = parseInt(m[1], 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/**
+ * Build a deterministic Blender (bpy) script that constructs the asset's
+ * multi-part geometry from its {@link AssetSpec} and exports a GLB. This is what
+ * lets Blender itself author game assets offline (no LLM required).
+ */
+export function buildAssetBlenderScript(
+  spec: AssetSpec,
+  glbPath: string,
+  brief = "asset",
+): string {
+  const parts =
+    spec.parts && spec.parts.length > 0
+      ? spec.parts
+      : [
+          {
+            shape: spec.shape,
+            color: spec.color,
+            size: spec.size,
+            offset: { x: 0, y: spec.size.y / 2, z: 0 },
+            roughness: spec.roughness,
+            metalness: spec.metalness,
+          },
+        ];
+
+  const lines: string[] = [
+    "import bpy",
+    "bpy.ops.object.select_all(action='SELECT')",
+    "bpy.ops.object.delete(use_global=False)",
+  ];
+
+  parts.forEach((part, i) => {
+    const [r, g, b] = hexToRgb(part.color ?? spec.color);
+    const rough = part.roughness ?? spec.roughness;
+    const metal = part.metalness ?? spec.metalness;
+    const sx = Math.max(part.size.x, 0.05);
+    const sy = Math.max(part.size.y, 0.05);
+    const sz = Math.max(part.size.z, 0.05);
+    lines.push(
+      `bpy.ops.mesh.${PRIMITIVE_OP[part.shape]}()`,
+      "obj = bpy.context.active_object",
+      `obj.name = ${JSON.stringify(`${slug(brief)}_${i}`)}`,
+      `obj.scale = (${sx.toFixed(3)}, ${sz.toFixed(3)}, ${sy.toFixed(3)})`,
+      `obj.location = (${(part.offset?.x ?? 0).toFixed(3)}, ${(part.offset?.z ?? 0).toFixed(3)}, ${(part.offset?.y ?? 0).toFixed(3)})`,
+      `mat = bpy.data.materials.new(name="mat_${i}")`,
+      "mat.use_nodes = True",
+      'bsdf = mat.node_tree.nodes.get("Principled BSDF")',
+      "if bsdf:",
+      `    bsdf.inputs["Base Color"].default_value = (${r.toFixed(3)}, ${g.toFixed(3)}, ${b.toFixed(3)}, 1)`,
+      `    bsdf.inputs["Metallic"].default_value = ${metal}`,
+      `    bsdf.inputs["Roughness"].default_value = ${rough}`,
+      "obj.data.materials.append(mat)",
+    );
+  });
+
+  lines.push(
+    `bpy.ops.export_scene.gltf(filepath=r"${glbPath}", export_format='GLB')`,
+    "",
+  );
+  return lines.join("\n");
 }
 
 async function writeText(filePath: string, contents: string): Promise<void> {
