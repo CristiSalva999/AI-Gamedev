@@ -14,6 +14,7 @@
   "dependencies": {
     "@ai-gamedev/shared": "*",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.1",
     "jszip": "^3.10.1"
   },

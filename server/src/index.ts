@@ -1,5 +1,5 @@
 import { createApp } from "./app.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, loadEnvFiles } from "./config.js";
 import { HybridBlenderAssetGenerator } from "./services/assetGenerator.js";
 import { FileContextStore } from "./services/contextStore.js";
 import { GamePackager } from "./services/gamePackager.js";
@@ -8,6 +8,7 @@ import { LMStudioClient } from "./services/llmClient.js";
 
 /** Composition root: build concrete dependencies and start the HTTP server. */
 async function main(): Promise<void> {
+  loadEnvFiles();
   const config = loadConfig();
 
   const llm = new LMStudioClient(config.llm);

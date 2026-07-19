@@ -9,7 +9,14 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Optional: start LM Studio on `http://localhost:1234/v1` (see `.env.example`).
+Open `http://localhost:5173`.
+
+### Local LM Studio + Blender (on your PC)
+
+1. Start LM Studio → Local Server → model `gemma-4-26b-a4b-it` (same endpoint pi.dev uses: `http://127.0.0.1:1234`).
+2. Copy `.env.example` → `server/.env` and set `BLENDER_BIN` to your `blender.exe` path.
+3. From the repo: `npm install && npm run dev`
+4. Badge should show **LLM · gemma…** and **blender** (not mock/procedural).
 
 ## Workspaces
 
