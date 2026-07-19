@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultContext } from "@ai-gamedev/shared";
-import { MockBlenderAssetGenerator } from "../src/services/assetGenerator.js";
+import {
+  buildAssetBlenderScript,
+  deriveSpec,
+  MockBlenderAssetGenerator,
+} from "../src/services/assetGenerator.js";
 import { FakeLLMClient } from "./support/fakes.js";
 
 const context = createDefaultContext();
@@ -47,5 +51,27 @@ describe("MockBlenderAssetGenerator", () => {
     const a = await generator().generate("mystic gem", context);
     const b = await generator().generate("mystic gem", context);
     expect(a.asset.spec).toEqual(b.asset.spec);
+  });
+});
+
+describe("buildAssetBlenderScript", () => {
+  it("builds a bpy script that constructs every part and exports a GLB", () => {
+    const spec = deriveSpec("ancient stone pillar", context);
+    const glbPath = "/tmp/out/pillar.glb";
+    const script = buildAssetBlenderScript(spec, glbPath, "ancient stone pillar");
+
+    expect(script).toContain("import bpy");
+    // One primitive add per mesh part.
+    const adds = script.match(/bpy\.ops\.mesh\.primitive_/g) ?? [];
+    expect(adds.length).toBe(spec.parts?.length);
+    // Exports to our exact path/format (never the author's path).
+    expect(script).toContain(`export_scene.gltf(filepath=r"${glbPath}", export_format='GLB')`);
+  });
+
+  it("always maps a single-part spec to a primitive and export", () => {
+    const spec = deriveSpec("glowing orb", context);
+    const script = buildAssetBlenderScript(spec, "/tmp/orb.glb");
+    expect(script).toMatch(/primitive_(uv_sphere|cube|cylinder|cone|torus)_add/);
+    expect(script).toContain("export_format='GLB'");
   });
 });
