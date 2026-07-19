@@ -39,6 +39,13 @@ const MOVE_KEYS: Record<string, [number, number]> = {
 
 const BOUND = 11;
 
+/** True when the user is typing in an input/textarea/contenteditable. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
 /**
  * Owns the imperative Three.js runtime and renders a {@link GameBlueprint} as a
  * small playable scene: themed lighting, animated entities, and a WASD/arrow-key
@@ -59,10 +66,20 @@ export function useThreeScene(): ThreeScene {
   const speedRef = useRef<number>(6);
   const playerAnimsRef = useRef<GameBlueprint["player"]["animations"] | null>(null);
   const playerBaseYRef = useRef(0.5);
+  const playFocusedRef = useRef(false);
+  /** Respawn only when a brand-new game starts — not on every sneak-peek. */
+  const activeGameKeyRef = useRef<string>("");
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    container.tabIndex = 0;
+    container.setAttribute("role", "application");
+    container.setAttribute(
+      "aria-label",
+      "Game preview. Click to focus, then use WASD or arrow keys to move.",
+    );
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#12131a");
@@ -70,7 +87,7 @@ export function useThreeScene(): ThreeScene {
 
     const camera = new THREE.PerspectiveCamera(
       55,
-      container.clientWidth / container.clientHeight,
+      Math.max(container.clientWidth, 1) / Math.max(container.clientHeight, 1),
       0.1,
       1000,
     );
@@ -126,12 +143,32 @@ export function useThreeScene(): ThreeScene {
     playerLightRef.current = playerLight;
     scene.add(playerLight);
 
+    const onPointerDown = () => {
+      playFocusedRef.current = true;
+      container.focus({ preventScroll: true });
+    };
+    const onFocus = () => {
+      playFocusedRef.current = true;
+    };
+    const onBlur = () => {
+      playFocusedRef.current = false;
+      keysRef.current.clear();
+    };
+    container.addEventListener("pointerdown", onPointerDown);
+    container.addEventListener("focus", onFocus);
+    container.addEventListener("blur", onBlur);
+
     const onKeyDown = (e: KeyboardEvent) => {
+      // Never steal keys while the user is composing a chat message.
+      if (isTypingTarget(e.target) || !playFocusedRef.current) return;
       if (e.code in MOVE_KEYS) {
+        e.preventDefault();
         keysRef.current.add(e.code);
       }
     };
-    const onKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.code);
+    const onKeyUp = (e: KeyboardEvent) => {
+      keysRef.current.delete(e.code);
+    };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
 
@@ -146,7 +183,6 @@ export function useThreeScene(): ThreeScene {
         applyEntityMotion(child, t, delta);
       }
 
-      // Player movement (screen-relative on the ground plane).
       let dx = 0;
       let dz = 0;
       for (const code of keysRef.current) {
@@ -179,7 +215,7 @@ export function useThreeScene(): ThreeScene {
     animate();
 
     const onResize = () => {
-      if (!container.clientWidth) return;
+      if (!container.clientWidth || !container.clientHeight) return;
       camera.aspect = container.clientWidth / container.clientHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(container.clientWidth, container.clientHeight);
@@ -193,10 +229,15 @@ export function useThreeScene(): ThreeScene {
       window.removeEventListener("resize", onResize);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      container.removeEventListener("pointerdown", onPointerDown);
+      container.removeEventListener("focus", onFocus);
+      container.removeEventListener("blur", onBlur);
       observer.disconnect();
       controls.dispose();
       renderer.dispose();
-      container.removeChild(renderer.domElement);
+      if (renderer.domElement.parentElement === container) {
+        container.removeChild(renderer.domElement);
+      }
       sceneRef.current = null;
     };
   }, []);
@@ -214,8 +255,6 @@ export function useThreeScene(): ThreeScene {
       ground: groundRef.current,
     });
 
-    // Rebuild entities from scratch — cheap for these small scenes and keeps
-    // the render a pure function of the current blueprint.
     for (const child of [...group.children]) {
       group.remove(child);
       const mesh = child as THREE.Mesh;
@@ -233,7 +272,7 @@ export function useThreeScene(): ThreeScene {
         baseY,
         baseZ: entity.position.z,
         baseScaleY: 1,
-        phase: Math.random() * Math.PI * 2,
+        phase: hashPhase(entity.id),
         animation: entity.animation,
       } satisfies EntityUserData;
       group.add(mesh);
@@ -243,9 +282,26 @@ export function useThreeScene(): ThreeScene {
     playerAnimsRef.current = blueprint.player.animations;
     playerBaseYRef.current = blueprint.player.spawn.y;
     (player.material as THREE.MeshStandardMaterial).color.set(blueprint.player.color);
+
+    const gameKey = `${blueprint.gameTitle}:${blueprint.createdAt}`;
+    if (activeGameKeyRef.current !== gameKey) {
+      activeGameKeyRef.current = gameKey;
+      player.position.set(
+        blueprint.player.spawn.x,
+        blueprint.player.spawn.y,
+        blueprint.player.spawn.z,
+      );
+    }
   }, []);
 
   return { containerRef: containerRef as React.RefObject<HTMLDivElement>, setBlueprint };
+}
+
+/** Stable phase from entity id so rebuilds don't reshuffle animation offsets. */
+function hashPhase(id: string): number {
+  let hash = 0;
+  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return (hash % 628) / 100;
 }
 
 function applyEntityMotion(child: THREE.Object3D, t: number, delta: number): void {
@@ -326,7 +382,6 @@ function lightingSettings(mood: LightingMood): {
     case "cave":
       return { ambient: 0.16, sun: 0.15, sunColor: "#6673aa", playerLight: 1.4 };
     default: {
-      // Exhaustiveness guard for LightingMood.
       const _never: never = mood;
       return _never;
     }

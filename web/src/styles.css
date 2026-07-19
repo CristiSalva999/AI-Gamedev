@@ -19,15 +19,16 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-family: "Segoe UI", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
 
 .layout {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: minmax(300px, 380px) 1fr;
   height: 100vh;
+  height: 100dvh;
 }
 
 .panel {
@@ -37,19 +38,22 @@ body,
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .brand {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .brand h1 {
   margin: 0;
   font-size: 20px;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
 .status {
@@ -58,6 +62,10 @@ body,
   padding: 4px 9px;
   border-radius: 999px;
   border: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .status.pending {
   color: var(--muted);
@@ -76,12 +84,20 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 10px;
   font-size: 14px;
+}
+
+.game-head-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .muted {
@@ -97,6 +113,7 @@ body,
   font-weight: 600;
   padding: 0;
   width: auto;
+  flex-shrink: 0;
 }
 .link:disabled {
   color: var(--muted);
@@ -111,6 +128,7 @@ body,
   flex-direction: column;
   gap: 6px;
   padding: 6px 2px;
+  scrollbar-gutter: stable;
 }
 
 .line {
@@ -142,6 +160,10 @@ body,
   padding: 4px 8px;
 }
 
+.stage-mark {
+  opacity: 0.8;
+}
+
 .line.peek {
   align-self: flex-start;
   color: var(--muted);
@@ -158,6 +180,24 @@ body,
   color: #7be0b8;
   font-size: 12px;
   font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.artifact-link {
+  color: #0d0e14;
+  background: var(--accent-2);
+  text-decoration: none;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+}
+.artifact-link:hover {
+  filter: brightness(1.08);
 }
 
 .line.error {
@@ -166,6 +206,7 @@ body,
   border: 1px solid #5b1e24;
   color: #ff7675;
   font-size: 12px;
+  max-width: 100%;
 }
 
 .pulse {
@@ -210,12 +251,18 @@ body,
 
 .composer input {
   flex: 1;
+  min-width: 0;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: #10111a;
   color: var(--text);
   font-size: 13px;
+}
+.composer input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+  border-color: var(--accent);
 }
 
 button {
@@ -227,6 +274,11 @@ button {
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
+  flex-shrink: 0;
+}
+button.secondary {
+  background: #3a3148;
+  color: #f2e9ff;
 }
 button:disabled {
   opacity: 0.55;
@@ -237,21 +289,34 @@ button:disabled {
   position: relative;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  background:
+    radial-gradient(ellipse at 30% 20%, #1a1c2c 0%, transparent 55%),
+    var(--bg);
 }
 
 .viewport {
   position: absolute;
   inset: 0;
+  outline: none;
+}
+
+.viewport:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-2) 70%, transparent);
 }
 
 .viewport canvas {
   display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .hud {
   position: absolute;
   left: 16px;
   bottom: 14px;
+  right: 16px;
+  max-width: 420px;
   padding: 6px 12px;
   border-radius: 8px;
   background: rgba(13, 14, 20, 0.7);
@@ -259,4 +324,26 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
   pointer-events: none;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(42vh, 1fr) minmax(48vh, 1fr);
+  }
+
+  .panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    order: 2;
+  }
+
+  .viewport-wrap {
+    order: 1;
+    min-height: 42vh;
+  }
+
+  .brand h1 {
+    font-size: 18px;
+  }
 }

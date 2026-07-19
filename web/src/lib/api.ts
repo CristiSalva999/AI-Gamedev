@@ -9,10 +9,11 @@ import type {
 import { parseSseBuffer } from "./sse.js";
 
 /**
- * Thin, typed client for the orchestration API. Uses same-origin `/api/*`
- * paths, which Vite proxies to the backend in dev.
+ * Thin, typed client for the orchestration API. Prefer same-origin `/api/*`
+ * paths (Vite proxies them in dev) so Cursor Cloud / remote previews work
+ * without pointing the browser at localhost.
  */
-const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -45,6 +46,9 @@ export const api = {
       body: JSON.stringify({ brief }),
     }),
 
+  /** Absolute-or-relative URL for a packaged zip download. */
+  artifactUrl: (downloadPath: string): string => `${BASE}${downloadPath}`,
+
   /**
    * Sends a chat message and streams the autonomous pipeline's build events.
    * `onEvent` is called for each event as it arrives.
@@ -73,7 +77,13 @@ export const api = {
       buffer += decoder.decode(value, { stream: true });
       const { data, rest } = parseSseBuffer(buffer);
       buffer = rest;
-      for (const payload of data) onEvent(JSON.parse(payload) as BuildEvent);
+      for (const payload of data) {
+        try {
+          onEvent(JSON.parse(payload) as BuildEvent);
+        } catch {
+          // Skip malformed frames rather than aborting the whole stream.
+        }
+      }
     }
   },
 };

@@ -16,7 +16,8 @@ Standard scripts live in the root and per-workspace `package.json` (`dev`, `buil
 
 ## Cursor Cloud specific instructions
 
-- Run everything from the repo root. `npm run dev` starts backend (`:3001`) and frontend (`:5173`) together via `concurrently`; the Vite dev server proxies `/api/*` to the backend, so open only `http://localhost:5173`.
+- Run everything from the repo root. `npm run dev` starts backend (`:3001`) and frontend (`:5173`) together via `concurrently`; the Vite dev server proxies `/api/*` to the backend, so open only `http://localhost:5173` (or the Cursor Cloud preview URL for port 5173).
+- Vite `server.allowedHosts` is set to `true` so Cursor Cloud hosts (`*.cursorvm.com`) are not blocked. Do not tighten this without an equivalent allowlist for preview domains. Leave `VITE_API_BASE_URL` empty so the browser hits same-origin `/api` through the Vite proxy (pointing it at `localhost:3001` breaks remote previews).
 - No local LLM or Blender exists in the cloud VM, and that is fine: the app is designed to run fully offline.
   - The LLM client targets an OpenAI-compatible endpoint (LM Studio) at `http://localhost:1234/v1`. When it is unreachable the server automatically falls back to a **deterministic mock**; responses are tagged `source: "mock"` (vs `"llm"`). This is expected in the cloud — it is not a failure. Set `LLM_ALLOW_MOCK_FALLBACK=false` to force real calls and surface connection errors instead.
   - Asset generation uses `HybridBlenderAssetGenerator`: if a Blender binary is on `PATH` (or `BLENDER_BIN`), it runs headless; otherwise it writes **procedural `.glb`** files and returns an illustrative `bpy` script. Health reports `blender.mode: "blender" | "procedural"`.

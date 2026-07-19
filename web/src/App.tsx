@@ -15,6 +15,8 @@ interface ChatLine {
   kind: LineKind;
   text: string;
   source?: GenerationSource;
+  /** Optional action rendered under artifact lines. */
+  action?: { label: string; href: string };
 }
 
 let lineSeq = 0;
@@ -37,15 +39,18 @@ export function App(): JSX.Element {
   const [llmReachable, setLlmReachable] = useState<boolean | null>(null);
   const [model, setModel] = useState("");
   const [blenderMode, setBlenderMode] = useState<"blender" | "procedural" | null>(null);
+  const [ready, setReady] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const pushLine = useCallback((line: Omit<ChatLine, "id">) => {
     setLines((prev) => [...prev, { id: lineSeq++, ...line }]);
   }, []);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [lines]);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [lines, building]);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,23 +66,44 @@ export function App(): JSX.Element {
           setBlueprintState(ctx.blueprint);
         }
         if (ctx.lastManifest) setManifest(ctx.lastManifest);
-        for (const msg of ctx.chat) {
-          pushLine({ kind: msg.role === "user" ? "user" : "assistant", text: msg.content });
+
+        const history: ChatLine[] = ctx.chat.map((msg) => ({
+          id: lineSeq++,
+          kind: msg.role === "user" ? "user" : "assistant",
+          text: msg.content,
+        }));
+
+        // Only greet when the transcript is empty — avoid duplicating the
+        // welcome message on every page reload.
+        if (history.length === 0) {
+          history.push({
+            id: lineSeq++,
+            kind: "assistant",
+            text: health.llm.reachable
+              ? `Connected to LM Studio (${health.llm.model}). Describe a game and I'll build it end-to-end.`
+              : `Ready in offline mock mode. Describe a game — e.g. "${BUILD_SUGGESTIONS[0]}" — and I'll build it with live sneak peeks.`,
+          });
         }
-        pushLine({
-          kind: "assistant",
-          text: health.llm.reachable
-            ? `Connected to LM Studio (${health.llm.model}). Describe a game and I'll build it.`
-            : `Ready in offline mock mode (${health.llm.model}). Describe a game and I'll build it — e.g. "${BUILD_SUGGESTIONS[0]}".`,
-        });
+        setLines(history);
       } catch (err) {
-        if (!cancelled) pushLine({ kind: "error", text: `Init failed: ${(err as Error).message}` });
+        if (!cancelled) {
+          setLines([
+            {
+              id: lineSeq++,
+              kind: "error",
+              text: `Init failed: ${(err as Error).message}. Is the server running on :3001?`,
+            },
+          ]);
+        }
+      } finally {
+        if (!cancelled) setReady(true);
       }
     })();
     return () => {
       cancelled = true;
+      abortRef.current?.abort();
     };
-  }, [setBlueprint, pushLine]);
+  }, [setBlueprint]);
 
   const handleEvent = useCallback(
     (event: BuildEvent) => {
@@ -86,7 +112,7 @@ export function App(): JSX.Element {
           pushLine({ kind: "assistant", text: event.content });
           break;
         case "stage-start":
-          pushLine({ kind: "stage", text: `▶ ${event.label}` });
+          pushLine({ kind: "stage", text: event.label });
           break;
         case "sneak-peek":
           pushLine({ kind: "peek", text: event.note });
@@ -99,7 +125,11 @@ export function App(): JSX.Element {
           setManifest(event.manifest);
           pushLine({
             kind: "artifact",
-            text: `Packaged "${event.manifest.name}" on ${event.manifest.branch} · ${event.manifest.entityCount} objects · ${event.manifest.animationCount} clips · ~${event.manifest.approxSizeKb} KB`,
+            text: `Ready: "${event.manifest.name}" · ${event.manifest.entityCount} objects · ${event.manifest.animationCount} clips · ~${event.manifest.approxSizeKb} KB`,
+            action: {
+              label: "Download install zip",
+              href: api.artifactUrl(event.manifest.downloadUrl),
+            },
           });
           break;
         case "done":
@@ -110,7 +140,6 @@ export function App(): JSX.Element {
           pushLine({ kind: "error", text: event.message });
           break;
         default: {
-          // Exhaustiveness guard: new BuildEvent variants must be handled.
           const _never: never = event;
           return _never;
         }
@@ -122,26 +151,40 @@ export function App(): JSX.Element {
   const send = useCallback(
     async (message: string) => {
       const text = message.trim();
-      if (!text || building) return;
+      if (!text || building || !ready) return;
       setInput("");
       pushLine({ kind: "user", text });
       setBuilding(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
-        await api.chat(text, handleEvent);
+        await api.chat(text, handleEvent, controller.signal);
       } catch (err) {
-        pushLine({ kind: "error", text: `Build failed: ${(err as Error).message}` });
+        if ((err as Error).name === "AbortError") {
+          pushLine({ kind: "assistant", text: "Build cancelled." });
+        } else {
+          pushLine({ kind: "error", text: `Build failed: ${(err as Error).message}` });
+        }
       } finally {
+        abortRef.current = null;
         setBuilding(false);
+        // Return focus to the composer so the next steer is one keystroke away.
+        inputRef.current?.focus();
       }
     },
-    [building, handleEvent, pushLine],
+    [building, ready, handleEvent, pushLine],
   );
+
+  const cancelBuild = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const downloadZip = useCallback(() => {
     if (!manifest) return;
     const a = document.createElement("a");
-    a.href = manifest.downloadUrl;
+    a.href = api.artifactUrl(manifest.downloadUrl);
     a.download = `${manifest.slug}.zip`;
+    a.rel = "noopener";
     a.click();
   }, [manifest]);
 
@@ -160,28 +203,46 @@ export function App(): JSX.Element {
 
         {blueprint && (
           <div className="game-head">
-            <div>
+            <div className="game-head-text">
               <strong>{blueprint.gameTitle}</strong>
               <span className="muted"> · {blueprint.gameGenre}</span>
             </div>
-            <button className="link" onClick={downloadZip} disabled={!manifest}>
-              ⤓ install zip
+            <button
+              type="button"
+              className="link"
+              onClick={downloadZip}
+              disabled={!manifest}
+              title={manifest ? "Download playable zip" : "Finish a build to unlock download"}
+            >
+              Download zip
             </button>
           </div>
         )}
 
-        <div className="chat" ref={scrollRef}>
+        <div className="chat" ref={scrollRef} aria-live="polite">
           {lines.map((line) => (
             <div key={line.id} className={`line ${line.kind}`}>
+              {line.kind === "stage" ? <span className="stage-mark">▶ </span> : null}
               {line.text}
+              {line.action ? (
+                <a className="artifact-link" href={line.action.href} download>
+                  {line.action.label}
+                </a>
+              ) : null}
             </div>
           ))}
-          {building && <div className="line stage pulse">building…</div>}
+          {building && <div className="line stage pulse">Building…</div>}
         </div>
 
         <div className="suggestions">
           {suggestions.map((s) => (
-            <button key={s} className="chip" onClick={() => void send(s)} disabled={building}>
+            <button
+              key={s}
+              type="button"
+              className="chip"
+              onClick={() => void send(s)}
+              disabled={building || !ready}
+            >
               {s}
             </button>
           ))}
@@ -195,14 +256,29 @@ export function App(): JSX.Element {
           }}
         >
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={blueprint ? "Steer the build…" : "Describe a game to create…"}
-            disabled={building}
+            placeholder={
+              !ready
+                ? "Connecting…"
+                : blueprint
+                  ? "Steer the build…"
+                  : "Describe a game to create…"
+            }
+            disabled={building || !ready}
+            aria-label="Chat message"
+            autoComplete="off"
           />
-          <button type="submit" disabled={building || !input.trim()}>
-            {building ? "…" : "Send"}
-          </button>
+          {building ? (
+            <button type="button" className="secondary" onClick={cancelBuild}>
+              Stop
+            </button>
+          ) : (
+            <button type="submit" disabled={!ready || !input.trim()}>
+              Send
+            </button>
+          )}
         </form>
       </aside>
 
@@ -210,8 +286,8 @@ export function App(): JSX.Element {
         <div className="viewport" ref={containerRef} />
         <div className="hud">
           {blueprint
-            ? "WASD / arrows to move · drag to orbit"
-            : "Your game preview will appear here"}
+            ? "Click preview · WASD / arrows to move · drag to orbit"
+            : "Your game preview will appear here as the build streams"}
         </div>
       </main>
     </div>
@@ -229,12 +305,22 @@ function StatusBadge({
 }): JSX.Element {
   const state = reachable === null ? "pending" : reachable ? "online" : "mock";
   const llmLabel =
-    reachable === null ? "…" : reachable ? `LLM: ${model}` : "mock mode";
-  const assetLabel = blenderMode === "blender" ? " · blender" : blenderMode === "procedural" ? " · procedural" : "";
+    reachable === null ? "…" : reachable ? `LLM · ${shortModel(model)}` : "mock mode";
+  const assetLabel =
+    blenderMode === "blender"
+      ? " · blender"
+      : blenderMode === "procedural"
+        ? " · procedural"
+        : "";
   return (
-    <span className={`status ${state}`}>
+    <span className={`status ${state}`} title={model || undefined}>
       {llmLabel}
       {assetLabel}
     </span>
   );
+}
+
+function shortModel(model: string): string {
+  if (model.length <= 18) return model;
+  return `${model.slice(0, 16)}…`;
 }
