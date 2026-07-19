@@ -5,6 +5,7 @@ import { FileContextStore } from "./services/contextStore.js";
 import { GamePackager } from "./services/gamePackager.js";
 import { GitWorkspaceService } from "./services/gitWorkspace.js";
 import { LMStudioClient } from "./services/llmClient.js";
+import { ProjectStore } from "./services/projectStore.js";
 
 /** Composition root: build concrete dependencies and start the HTTP server. */
 async function main(): Promise<void> {
@@ -15,6 +16,7 @@ async function main(): Promise<void> {
   const assetGenerator = new HybridBlenderAssetGenerator(llm, undefined, config.blenderBin);
   const git = new GitWorkspaceService(config.gamesDir);
   const packager = new GamePackager({ git, gamesRoot: config.gamesDir });
+  const projectStore = new ProjectStore(config.dataDir);
   const blenderAvailable = await assetGenerator.blenderAvailable();
 
   // A small delay makes the streamed "sneak peeks" feel deliberate in the UI.
@@ -24,6 +26,7 @@ async function main(): Promise<void> {
     assetGenerator,
     packager,
     gamesDir: config.gamesDir,
+    projectStore,
     pipelineOptions: { delayMs: 140 },
   });
 

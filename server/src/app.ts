@@ -5,11 +5,13 @@ import path from "node:path";
 import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import {
+  composeSetupPrompt,
   type BuildEvent,
   type ChatMessage,
   type ChatRequest,
   type GameBlueprint,
   type GameContext,
+  type GameSetupAnswers,
   type GenerateAssetRequest,
   type GenerateAssetResponse,
   type GenerateRequest,
@@ -23,6 +25,7 @@ import type { AssetGenerator } from "./services/assetGenerator.js";
 import type { ContextStore } from "./services/contextStore.js";
 import type { GamePackager } from "./services/gamePackager.js";
 import type { LLMClient } from "./services/llmClient.js";
+import type { ProjectStore } from "./services/projectStore.js";
 
 export interface AppDependencies {
   contextStore: ContextStore;
@@ -30,6 +33,8 @@ export interface AppDependencies {
   assetGenerator: AssetGenerator;
   packager?: GamePackager;
   gamesDir?: string;
+  /** Optional multi-project registry enabling the Cursor-style projects UI. */
+  projectStore?: ProjectStore;
   /** Pipeline tuning (e.g. streaming delays); overridable in tests. */
   pipelineOptions?: PipelineOptions;
 }
@@ -45,6 +50,7 @@ export function createApp(deps: AppDependencies): Express {
     assetGenerator,
     packager,
     gamesDir,
+    projectStore,
     pipelineOptions,
   } = deps;
   const app = express();
@@ -189,6 +195,8 @@ export function createApp(deps: AppDependencies): Express {
     }),
   );
 
+  const streamDeps = { llm, assetGenerator, packager, gamesDir, pipelineOptions };
+
   // Chat-driven autonomous pipeline. Streams Server-Sent Events so the client
   // can render progress and live "sneak peeks" of the game being built.
   app.post("/api/chat", async (req: Request, res: Response) => {
@@ -197,72 +205,153 @@ export function createApp(deps: AppDependencies): Express {
       res.status(400).json({ error: "Missing 'message' in request body" });
       return;
     }
-
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+    const context = await contextStore.load();
+    await streamChat(streamDeps, message, context, res, async (updated) => {
+      await contextStore.save(updated);
     });
-    res.flushHeaders?.();
-
-    let aborted = false;
-    // Detect real client disconnects on the response; the request stream can
-    // emit "close" early (once its body is consumed), which would abort too soon.
-    res.on("close", () => {
-      aborted = true;
-    });
-
-    const send = (event: BuildEvent): void => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
-
-    try {
-      const context = await contextStore.load();
-      context.chat.push(chatMessage("user", message));
-
-      const build = !context.blueprint || isBuildRequest(message);
-      const pipelineDeps = {
-        llm,
-        assetGenerator,
-        packager,
-        assetsDir: gamesDir,
-      };
-      const events = build
-        ? runBuild(message, pipelineDeps, pipelineOptions)
-        : runSteer(message, context.blueprint as GameBlueprint, pipelineDeps);
-
-      let latest: GameBlueprint | undefined = context.blueprint;
-      for await (const event of events) {
-        if (aborted) break;
-        if (event.type === "sneak-peek" || event.type === "done") {
-          latest = event.blueprint;
-        }
-        if (event.type === "artifact") {
-          context.lastManifest = event.manifest;
-        }
-        if (event.type === "message") {
-          context.chat.push(chatMessage("assistant", event.content));
-        }
-        send(event);
-      }
-
-      if (!aborted) {
-        context.blueprint = latest;
-        // Bound the persisted transcript so the file stays small.
-        context.chat = context.chat.slice(-50);
-        await contextStore.save(context);
-      }
-    } catch (error) {
-      const messageText = error instanceof Error ? error.message : "Pipeline failed";
-      console.error("[server] pipeline failed:", messageText);
-      if (!aborted) send({ type: "error", message: messageText });
-    } finally {
-      res.end();
-    }
   });
+
+  // ----- Projects (Cursor-style grouping) ----------------------------------
+  if (projectStore) {
+    app.get(
+      "/api/projects",
+      asyncHandler(async (_req, res) => {
+        res.json(await projectStore.list());
+      }),
+    );
+
+    app.post(
+      "/api/projects",
+      asyncHandler(async (req, res) => {
+        const answers = req.body as Partial<GameSetupAnswers>;
+        if (!answers || typeof answers.title !== "string" || !answers.title.trim()) {
+          res.status(400).json({ error: "A project title is required" });
+          return;
+        }
+        const record = await projectStore.create(answers as GameSetupAnswers);
+        res.status(201).json({
+          ...record.meta,
+          initialPrompt: composeSetupPrompt(answers as GameSetupAnswers),
+        });
+      }),
+    );
+
+    app.get(
+      "/api/projects/:id",
+      asyncHandler(async (req, res) => {
+        const id = String(req.params.id);
+        const record = await projectStore.get(id);
+        if (!record) {
+          res.status(404).json({ error: "Project not found" });
+          return;
+        }
+        res.json({ meta: record.meta, context: record.context });
+      }),
+    );
+
+    app.post("/api/projects/:id/chat", async (req: Request, res: Response) => {
+      const id = String(req.params.id);
+      const { message } = (req.body ?? {}) as ChatRequest;
+      if (!message || typeof message !== "string") {
+        res.status(400).json({ error: "Missing 'message' in request body" });
+        return;
+      }
+      const record = await projectStore.get(id);
+      if (!record) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      await streamChat(streamDeps, message, record.context, res, async (updated) => {
+        await projectStore.saveContext(id, updated);
+      });
+    });
+  }
 
   app.use(errorHandler);
   return app;
+}
+
+interface StreamDeps {
+  llm: LLMClient;
+  assetGenerator: AssetGenerator;
+  packager?: GamePackager;
+  gamesDir?: string;
+  pipelineOptions?: PipelineOptions;
+}
+
+/**
+ * Runs the build/steer pipeline for one message against a given context and
+ * streams events over SSE. The `persist` callback stores the mutated context —
+ * either the global context store or a per-project store — so this single
+ * implementation backs both `/api/chat` and `/api/projects/:id/chat`.
+ */
+async function streamChat(
+  deps: StreamDeps,
+  message: string,
+  context: GameContext,
+  res: Response,
+  persist: (context: GameContext) => Promise<void>,
+): Promise<void> {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  res.flushHeaders?.();
+
+  let aborted = false;
+  // Detect real client disconnects on the response; the request stream can
+  // emit "close" early (once its body is consumed), which would abort too soon.
+  res.on("close", () => {
+    aborted = true;
+  });
+
+  const send = (event: BuildEvent): void => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  try {
+    context.chat.push(chatMessage("user", message));
+
+    const build = !context.blueprint || isBuildRequest(message);
+    const pipelineDeps = {
+      llm: deps.llm,
+      assetGenerator: deps.assetGenerator,
+      packager: deps.packager,
+      assetsDir: deps.gamesDir,
+    };
+    const events = build
+      ? runBuild(message, pipelineDeps, deps.pipelineOptions)
+      : runSteer(message, context.blueprint as GameBlueprint, pipelineDeps);
+
+    let latest: GameBlueprint | undefined = context.blueprint;
+    for await (const event of events) {
+      if (aborted) break;
+      if (event.type === "sneak-peek" || event.type === "done") {
+        latest = event.blueprint;
+      }
+      if (event.type === "artifact") {
+        context.lastManifest = event.manifest;
+      }
+      if (event.type === "message") {
+        context.chat.push(chatMessage("assistant", event.content));
+      }
+      send(event);
+    }
+
+    if (!aborted) {
+      context.blueprint = latest;
+      // Bound the persisted transcript so the file stays small.
+      context.chat = context.chat.slice(-50);
+      await persist(context);
+    }
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : "Pipeline failed";
+    console.error("[server] pipeline failed:", messageText);
+    if (!aborted) send({ type: "error", message: messageText });
+  } finally {
+    res.end();
+  }
 }
 
 /** Heuristic: does this message ask to start a brand-new game build? */
