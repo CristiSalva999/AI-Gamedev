@@ -149,7 +149,7 @@ export function buildPlayableHtml(blueprint: GameBlueprint): string {
 <div id="title">${escapeHtml(blueprint.gameTitle)}</div>
 <div id="loot">Loot: 0</div>
 <canvas id="c"></canvas>
-<div id="hud">WASD to explore · E near glowing props to collect · Esc to reset</div>
+<div id="hud">${escapeHtml(blueprint.controls?.hudLine ?? "WASD move · E interact")} · Esc to reset</div>
 <script>
 const BP = ${payload};
 const canvas = document.getElementById("c");

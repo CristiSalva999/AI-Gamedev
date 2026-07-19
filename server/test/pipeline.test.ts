@@ -49,6 +49,8 @@ describe("runBuild", () => {
     expect(blueprint.environment.terrain?.kind).toBe("rolling");
     expect(blueprint.design?.fidelity).toBe("cinematic");
     expect(blueprint.design?.systems.controlScheme).toBe("walk");
+    expect(blueprint.controls?.scheme).toBe("walk");
+    expect(blueprint.controls?.bindings.some((b) => b.action === "interact")).toBe(true);
     expect(blueprint.worldRecipe?.zones.length).toBeGreaterThan(0);
     expect(blueprint.visualStyle.toLowerCase()).not.toContain("low-poly");
     expect(blueprint.entities.some((e) => e.spec.prefab === "stone_arch")).toBe(true);
@@ -66,6 +68,9 @@ describe("runBuild", () => {
     const blueprint = lastBlueprint(events);
     expect(blueprint.design?.genre).toBe("racing");
     expect(blueprint.player.avatar).toBe("car");
+    expect(blueprint.controls?.scheme).toBe("drive");
+    expect(blueprint.controls?.bindings.some((b) => b.action === "handbrake")).toBe(true);
+    expect(blueprint.controls?.bindings.some((b) => b.action === "accelerate")).toBe(true);
     expect(blueprint.environment.terrain?.kind).toBe("track_bowl");
     expect(blueprint.entities.some((e) => e.spec.prefab === "track_checkpoint")).toBe(true);
     expect(blueprint.entities.some((e) => e.spec.prefab === "track_barrier")).toBe(true);

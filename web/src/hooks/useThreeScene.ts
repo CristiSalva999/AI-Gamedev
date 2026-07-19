@@ -2,10 +2,15 @@ import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
+  actionAxis,
   buildPrefab,
+  controlProfileFor,
+  isActionDown,
+  profileKeyCodes,
   sampleClip,
   sampleTerrainHeight,
   type AnimationClip,
+  type ControlProfile,
   type EntityBehavior,
   type GameBlueprint,
   type LightingMood,
@@ -36,18 +41,8 @@ interface EntityUserData {
   footprint: number;
 }
 
-const MOVE_KEYS: Record<string, [number, number]> = {
-  KeyW: [0, -1],
-  ArrowUp: [0, -1],
-  KeyS: [0, 1],
-  ArrowDown: [0, 1],
-  KeyA: [-1, 0],
-  ArrowLeft: [-1, 0],
-  KeyD: [1, 0],
-  ArrowRight: [1, 0],
-};
-
 const DEFAULT_BOUND = 18;
+const DEFAULT_CONTROLS = controlProfileFor("walk");
 
 /** True when the user is typing in an input/textarea/contenteditable. */
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -94,6 +89,13 @@ export function useThreeScene(): ThreeScene {
   const accelRef = useRef(22);
   const terrainRef = useRef<TerrainSpec | null>(null);
   const checkpointsHitRef = useRef<Set<string>>(new Set());
+  const controlProfileRef = useRef<ControlProfile>(DEFAULT_CONTROLS);
+  const controlCodesRef = useRef<Set<string>>(profileKeyCodes(DEFAULT_CONTROLS));
+  const projectilesRef = useRef<THREE.Group | null>(null);
+  const fireCooldownRef = useRef(0);
+  const verticalVelRef = useRef(0);
+  const jumpOffsetRef = useRef(0);
+  const crouchingRef = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -103,7 +105,7 @@ export function useThreeScene(): ThreeScene {
     container.setAttribute("role", "application");
     container.setAttribute(
       "aria-label",
-      "Game preview. Click to focus, then use WASD to move or drive. Press E to interact.",
+      "Game preview. Click to focus, then use the on-screen control scheme for this game.",
     );
 
     const hint = document.createElement("div");
@@ -202,6 +204,10 @@ export function useThreeScene(): ThreeScene {
     entitiesRef.current = entities;
     scene.add(entities);
 
+    const projectiles = new THREE.Group();
+    projectilesRef.current = projectiles;
+    scene.add(projectiles);
+
     const player = buildPlayerAvatar(0x6c5ce7);
     player.position.set(0, 0, 4);
     playerRef.current = player;
@@ -271,8 +277,10 @@ export function useThreeScene(): ThreeScene {
       nearEntityRef.current = best;
       if (best) {
         const data = best.userData as EntityUserData;
+        const interactLabel =
+          controlProfileRef.current.bindings.find((b) => b.action === "interact")?.label ?? "E";
         hintElRef.current.hidden = false;
-        hintElRef.current.textContent = `[E] ${data.hint ?? data.name}`;
+        hintElRef.current.textContent = `[${interactLabel}] ${data.hint ?? data.name}`;
       } else if (!hintElRef.current.textContent?.startsWith("Collected")) {
         hintElRef.current.hidden = true;
       }
@@ -281,11 +289,12 @@ export function useThreeScene(): ThreeScene {
     const onKeyDown = (e: KeyboardEvent) => {
       // Never steal keys while the user is composing a chat message.
       if (isTypingTarget(e.target) || !playFocusedRef.current) return;
-      if (e.code in MOVE_KEYS) {
+      if (controlCodesRef.current.has(e.code)) {
         e.preventDefault();
         keysRef.current.add(e.code);
       }
-      if (e.code === "KeyE") {
+      const profile = controlProfileRef.current;
+      if (isActionDown(profile, "interact", new Set([e.code]))) {
         e.preventDefault();
         tryCollectNear();
       }
@@ -302,28 +311,23 @@ export function useThreeScene(): ThreeScene {
       raf = requestAnimationFrame(animate);
       const delta = clock.getDelta();
       const t = clock.elapsedTime;
+      const profile = controlProfileRef.current;
+      const keys = keysRef.current;
 
       for (const child of entities.children) {
         applyEntityMotion(child, t, delta);
       }
+      stepProjectiles(projectiles, delta);
 
-      let dx = 0;
-      let dz = 0;
-      for (const code of keysRef.current) {
-        const move = MOVE_KEYS[code];
-        if (move) {
-          dx += move[0];
-          dz += move[1];
-        }
-      }
       const bound = boundRef.current;
       let moving = false;
       if (playerRef.current) {
-        if (avatarModeRef.current === "car") {
+        const scheme = profile.scheme;
+        if (scheme === "drive" || avatarModeRef.current === "car") {
           moving = stepDrive(
             playerRef.current,
-            dx,
-            dz,
+            profile,
+            keys,
             delta,
             bound,
             entities.children,
@@ -332,17 +336,50 @@ export function useThreeScene(): ThreeScene {
             accelRef,
             speedRef,
           );
+        } else if (scheme === "fly") {
+          moving = stepFly(playerRef.current, profile, keys, delta, bound, speedRef);
         } else {
-          moving = dx !== 0 || dz !== 0;
+          // walk / fps / twin_stick share locomotion; fps adds fire/reload/crouch.
+          const sprint = isActionDown(profile, "sprint", keys);
+          crouchingRef.current = isActionDown(profile, "crouch", keys);
+          const axisX = actionAxis(profile, "moveRight", "moveLeft", keys);
+          const axisZ = actionAxis(profile, "moveBack", "moveForward", keys);
+          moving = axisX !== 0 || axisZ !== 0;
           if (moving) {
-            const len = Math.hypot(dx, dz);
-            const step = (speedRef.current * delta) / len;
-            const nextX = THREE.MathUtils.clamp(playerRef.current.position.x + dx * step, -bound, bound);
-            const nextZ = THREE.MathUtils.clamp(playerRef.current.position.z + dz * step, -bound, bound);
+            const len = Math.hypot(axisX, axisZ);
+            const mul = (sprint ? 1.55 : 1) * (crouchingRef.current ? 0.55 : 1);
+            const step = (speedRef.current * mul * delta) / len;
+            const nextX = THREE.MathUtils.clamp(
+              playerRef.current.position.x + axisX * step,
+              -bound,
+              bound,
+            );
+            const nextZ = THREE.MathUtils.clamp(
+              playerRef.current.position.z + axisZ * step,
+              -bound,
+              bound,
+            );
             if (!collides(nextX, nextZ, entities.children, 0.55)) {
               playerRef.current.position.x = nextX;
               playerRef.current.position.z = nextZ;
-              playerRef.current.rotation.y = Math.atan2(dx, dz);
+              playerRef.current.rotation.y = Math.atan2(axisX, axisZ);
+            }
+          }
+
+          if (isActionDown(profile, "jump", keys) && jumpOffsetRef.current === 0) {
+            verticalVelRef.current = 5.5;
+          }
+
+          if (scheme === "fps" || scheme === "twin_stick") {
+            fireCooldownRef.current = Math.max(0, fireCooldownRef.current - delta);
+            if (isActionDown(profile, "fire", keys) && fireCooldownRef.current <= 0) {
+              spawnProjectile(projectiles, playerRef.current);
+              fireCooldownRef.current = 0.18;
+              if (lootElRef.current && !lootElRef.current.textContent?.startsWith("Checkpoints")) {
+                const prev = Number(lootElRef.current.dataset.shots ?? "0") + 1;
+                lootElRef.current.dataset.shots = String(prev);
+                lootElRef.current.textContent = `Shots: ${prev}`;
+              }
             }
           }
         }
@@ -353,36 +390,57 @@ export function useThreeScene(): ThreeScene {
           terrainRef.current,
           bound,
         );
+
+        if (avatarModeRef.current !== "car" && profile.scheme !== "fly") {
+          verticalVelRef.current -= 18 * delta;
+          jumpOffsetRef.current += verticalVelRef.current * delta;
+          if (jumpOffsetRef.current < 0) {
+            jumpOffsetRef.current = 0;
+            verticalVelRef.current = 0;
+          }
+        }
+
         const anims = playerAnimsRef.current;
-        if (anims && avatarModeRef.current === "capsule") {
+        const crouchScale = crouchingRef.current ? 0.72 : 1;
+        const standY = playerBaseYRef.current;
+        if (anims && avatarModeRef.current === "capsule" && profile.scheme !== "fly") {
           const clip = moving ? anims.walk : anims.idle;
           const sampled = sampleClip(clip, t);
-          playerRef.current.position.y = groundY + playerBaseYRef.current + (sampled["position.y"] ?? 0);
-          playerRef.current.scale.y = sampled["scale.y"] ?? 1;
+          playerRef.current.position.y =
+            groundY + standY + jumpOffsetRef.current + (sampled["position.y"] ?? 0);
+          playerRef.current.scale.y = (sampled["scale.y"] ?? 1) * crouchScale;
+        } else if (profile.scheme === "fly") {
+          // fly mode keeps absolute Y from stepFly
         } else {
-          playerRef.current.position.y = groundY + (avatarModeRef.current === "car" ? 0.05 : playerBaseYRef.current);
+          playerRef.current.position.y =
+            groundY + (avatarModeRef.current === "car" ? 0.05 : standY + jumpOffsetRef.current);
+          playerRef.current.scale.y = crouchScale;
         }
 
         if (playerLightRef.current) {
           playerLightRef.current.position.set(
             playerRef.current.position.x,
-            groundY + 2.4,
+            playerRef.current.position.y + 2,
             playerRef.current.position.z,
           );
         }
 
-        // Soft camera follow — tighter chase for racing.
-        const follow = avatarModeRef.current === "car" ? 0.08 : 0.03;
+        // Soft camera follow — tighter chase for racing / fps.
+        const chase = profile.scheme === "drive" || profile.scheme === "fps";
+        const follow = chase ? 0.08 : 0.03;
         const target = controls.target;
         target.x += (playerRef.current.position.x - target.x) * follow;
-        target.y += (groundY + 1.2 - target.y) * follow;
-        target.z += (playerRef.current.position.z - (avatarModeRef.current === "car" ? 0 : 1.5) - target.z) * follow;
-        if (avatarModeRef.current === "car" && cameraRef.current) {
+        target.y += (playerRef.current.position.y + 1.2 - target.y) * follow;
+        target.z +=
+          (playerRef.current.position.z - (chase ? 0 : 1.5) - target.z) * follow;
+        if (chase && cameraRef.current) {
           const yaw = playerRef.current.rotation.y;
+          const back = profile.scheme === "drive" ? 8 : 6;
+          const height = profile.scheme === "drive" ? 4.5 : 3.2;
           const desired = new THREE.Vector3(
-            playerRef.current.position.x + Math.sin(yaw) * 8,
-            groundY + 4.5,
-            playerRef.current.position.z + Math.cos(yaw) * 8,
+            playerRef.current.position.x + Math.sin(yaw) * back,
+            playerRef.current.position.y + height,
+            playerRef.current.position.z + Math.cos(yaw) * back,
           );
           cameraRef.current.position.lerp(desired, 0.06);
         }
@@ -392,7 +450,7 @@ export function useThreeScene(): ThreeScene {
       updateCheckpointProgress(
         playerRef.current,
         entities.children,
-        avatarModeRef.current,
+        profile.scheme,
         checkpointsHitRef,
         lootElRef.current,
       );
@@ -497,7 +555,14 @@ export function useThreeScene(): ThreeScene {
     accelRef.current = blueprint.player.acceleration ?? 22;
     terrainRef.current = blueprint.environment.terrain ?? null;
 
-    const nextAvatar = blueprint.player.avatar ?? "capsule";
+    const profile =
+      blueprint.controls ??
+      controlProfileFor(blueprint.design?.systems.controlScheme ?? "walk");
+    controlProfileRef.current = profile;
+    controlCodesRef.current = profileKeyCodes(profile);
+
+    const nextAvatar =
+      profile.scheme === "drive" ? "car" : (blueprint.player.avatar ?? "capsule");
     if (avatarModeRef.current !== nextAvatar) {
       rebuildPlayerAvatar(player, nextAvatar, blueprint.player.color);
       avatarModeRef.current = nextAvatar;
@@ -514,9 +579,23 @@ export function useThreeScene(): ThreeScene {
       collectedRef.current.clear();
       checkpointsHitRef.current.clear();
       velocityRef.current = 0;
+      verticalVelRef.current = 0;
+      jumpOffsetRef.current = 0;
+      fireCooldownRef.current = 0;
+      if (projectilesRef.current) {
+        for (const child of [...projectilesRef.current.children]) {
+          projectilesRef.current.remove(child);
+          disposeObject3D(child);
+        }
+      }
       if (lootElRef.current) {
+        lootElRef.current.dataset.shots = "0";
         lootElRef.current.textContent =
-          nextAvatar === "car" ? "Checkpoints: 0" : "Loot: 0";
+          profile.scheme === "drive"
+            ? "Checkpoints: 0"
+            : profile.scheme === "fps" || profile.scheme === "twin_stick"
+              ? "Shots: 0"
+              : "Loot: 0";
       }
       player.position.set(
         blueprint.player.spawn.x,
@@ -613,8 +692,8 @@ function terrainHeightAt(
 
 function stepDrive(
   player: THREE.Group,
-  dx: number,
-  dz: number,
+  profile: ControlProfile,
+  keys: ReadonlySet<string>,
   delta: number,
   bound: number,
   obstacles: THREE.Object3D[],
@@ -623,23 +702,30 @@ function stepDrive(
   accel: MutableRefObject<number>,
   speed: MutableRefObject<number>,
 ): boolean {
-  // W/S throttle, A/D steer (dz forward negative in our move map).
-  const throttle = -dz;
-  const steer = -dx;
+  const throttle = actionAxis(profile, "accelerate", "brake", keys);
+  const steer = actionAxis(profile, "steerRight", "steerLeft", keys);
+  const handbrake = isActionDown(profile, "handbrake", keys);
+  const boost = isActionDown(profile, "boost", keys);
+
   if (throttle !== 0) {
-    velocity.current += throttle * accel.current * delta;
+    const force = accel.current * (boost ? 1.45 : 1);
+    velocity.current += throttle * force * delta;
   } else {
-    velocity.current *= 1 - Math.min(1, delta * 1.8);
+    velocity.current *= 1 - Math.min(1, delta * (handbrake ? 4.5 : 1.8));
   }
-  velocity.current = THREE.MathUtils.clamp(
-    velocity.current,
-    -speed.current * 0.35,
-    speed.current,
-  );
+  if (handbrake) {
+    velocity.current *= 1 - Math.min(1, delta * 3.2);
+  }
+
+  const maxSpeed = speed.current * (boost ? 1.35 : 1);
+  velocity.current = THREE.MathUtils.clamp(velocity.current, -maxSpeed * 0.4, maxSpeed);
+
+  const steerMul = handbrake ? 1.7 : 1;
   if (Math.abs(velocity.current) > 0.2) {
     player.rotation.y +=
-      steer * turnSpeed.current * delta * Math.sign(velocity.current || 1);
+      steer * turnSpeed.current * steerMul * delta * Math.sign(velocity.current || 1);
   }
+
   const yaw = player.rotation.y;
   const nextX = THREE.MathUtils.clamp(
     player.position.x + Math.sin(yaw) * -velocity.current * delta,
@@ -660,14 +746,78 @@ function stepDrive(
   return Math.abs(velocity.current) > 0.15;
 }
 
+function stepFly(
+  player: THREE.Group,
+  profile: ControlProfile,
+  keys: ReadonlySet<string>,
+  delta: number,
+  bound: number,
+  speed: MutableRefObject<number>,
+): boolean {
+  const axisX = actionAxis(profile, "moveRight", "moveLeft", keys);
+  const axisZ = actionAxis(profile, "moveBack", "moveForward", keys);
+  const axisY =
+    (isActionDown(profile, "jump", keys) ? 1 : 0) -
+    (isActionDown(profile, "crouch", keys) ? 1 : 0);
+  const boost = isActionDown(profile, "boost", keys) ? 1.6 : 1;
+  const moving = axisX !== 0 || axisZ !== 0 || axisY !== 0;
+  if (!moving) return false;
+  const len = Math.hypot(axisX, axisZ, axisY) || 1;
+  const step = (speed.current * boost * delta) / len;
+  player.position.x = THREE.MathUtils.clamp(player.position.x + axisX * step, -bound, bound);
+  player.position.z = THREE.MathUtils.clamp(player.position.z + axisZ * step, -bound, bound);
+  player.position.y = THREE.MathUtils.clamp(player.position.y + axisY * step, 0.5, 18);
+  if (axisX !== 0 || axisZ !== 0) {
+    player.rotation.y = Math.atan2(axisX, axisZ);
+  }
+  return true;
+}
+
+function spawnProjectile(group: THREE.Group, player: THREE.Group): void {
+  const bolt = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 10, 10),
+    new THREE.MeshStandardMaterial({
+      color: "#00e5ff",
+      emissive: "#00e5ff",
+      emissiveIntensity: 1.2,
+    }),
+  );
+  const yaw = player.rotation.y;
+  bolt.position.set(
+    player.position.x - Math.sin(yaw) * 0.8,
+    player.position.y + 0.9,
+    player.position.z - Math.cos(yaw) * 0.8,
+  );
+  bolt.userData = {
+    vx: -Math.sin(yaw) * 28,
+    vz: -Math.cos(yaw) * 28,
+    life: 1.2,
+  };
+  group.add(bolt);
+}
+
+function stepProjectiles(group: THREE.Group | null, delta: number): void {
+  if (!group) return;
+  for (const child of [...group.children]) {
+    const data = child.userData as { vx: number; vz: number; life: number };
+    child.position.x += data.vx * delta;
+    child.position.z += data.vz * delta;
+    data.life -= delta;
+    if (data.life <= 0) {
+      group.remove(child);
+      disposeObject3D(child);
+    }
+  }
+}
+
 function updateCheckpointProgress(
   player: THREE.Group | null,
   children: THREE.Object3D[],
-  avatarMode: "capsule" | "car",
+  scheme: ControlProfile["scheme"],
   checkpointsHit: MutableRefObject<Set<string>>,
   lootEl: HTMLDivElement | null,
 ): void {
-  if (!player || avatarMode !== "car" || !lootEl) return;
+  if (!player || scheme !== "drive" || !lootEl) return;
   for (const child of children) {
     const data = child.userData as EntityUserData;
     if (!data.interactive || checkpointsHit.current.has(data.entityId)) continue;

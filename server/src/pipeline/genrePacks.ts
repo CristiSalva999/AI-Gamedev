@@ -278,7 +278,7 @@ const RACING_PACK: GenrePack = {
 
 const SHOOTER_PACK: GenrePack = {
   kind: "shooter",
-  mechanics: ["move", "aim", "shoot", "cover"],
+  mechanics: ["move", "aim", "shoot", "reload", "sprint", "cover"],
   theme: {
     genre: "Sci-fi shooter",
     visualStyle: "cinematic neon sci-fi — reflective metals, volumetric fog, emissive trim",
@@ -306,7 +306,7 @@ const SHOOTER_PACK: GenrePack = {
     fidelity,
     palette: ["#00e5ff", "#7c4dff", "#ff4081", "#1de9b6"],
     systems: {
-      controlScheme: "walk",
+      controlScheme: "fps",
       cameraMode: "orbit_follow",
       objectives: ["Secure the landing pad", "Collect energy orbs"],
       winCondition: "Collect 5 energy orbs",

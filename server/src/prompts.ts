@@ -90,7 +90,7 @@ Return ONLY JSON with this shape:
   "fidelity": "${fidelity}",
   "palette": string[4],
   "systems": {
-    "controlScheme": "walk"|"drive"|"fly"|"twin_stick",
+    "controlScheme": "walk"|"drive"|"fly"|"twin_stick"|"fps",
     "cameraMode": "orbit_follow"|"chase"|"top_down"|"first_person",
     "objectives": string[],
     "winCondition": string,

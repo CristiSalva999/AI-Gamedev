@@ -1,4 +1,5 @@
 import {
+  controlProfileFor,
   createDefaultContext,
   type BlueprintEntity,
   type BuildEvent,
@@ -125,13 +126,20 @@ export async function* runBuild(
   blueprint.visualStyle = design.visualStyle;
   blueprint.colorPalette = design.palette;
   blueprint.gameGenre = theme.genre;
+  blueprint.controls = controlProfileFor(design.systems.controlScheme);
+  if (design.systems.controlHints?.length) {
+    blueprint.controls = {
+      ...blueprint.controls,
+      hudLine: design.systems.controlHints.join(" · "),
+    };
+  }
   context.visualStyle = design.visualStyle;
   context.colorPalette = design.palette;
   blueprint.updatedAt = Date.now();
   yield {
     type: "sneak-peek",
     stage: "design",
-    note: `Design: ${design.genre}/${design.systems.controlScheme} · fidelity ${design.fidelity} · ${design.systems.objectives.length} objectives. ${design.pitch}`,
+    note: `Design: ${design.genre}/${design.systems.controlScheme} · controls: ${blueprint.controls.hudLine} · fidelity ${design.fidelity}. ${design.pitch}`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "design" };
@@ -273,14 +281,11 @@ export async function* runBuild(
   yield { type: "stage-start", stage: "assemble", label: "Assembling scene" };
   blueprint.updatedAt = Date.now();
   const interactiveCount = blueprint.entities.filter((e) => e.interactive).length;
-  const control = blueprint.design?.systems.controlScheme ?? "walk";
+  const controls = blueprint.controls;
   yield {
     type: "sneak-peek",
     stage: "assemble",
-    note:
-      control === "drive"
-        ? `Assembled ${blueprint.entities.length} trackside props. Drive with WASD — checkpoints count automatically.`
-        : `Assembled ${blueprint.entities.length} cinematic props (${interactiveCount} interactive). Explore and press E near glowing props to collect.`,
+    note: `Assembled ${blueprint.entities.length} props (${interactiveCount} interactive). Controls [${controls?.scheme ?? "walk"}]: ${controls?.hudLine ?? "WASD"}.`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "assemble" };

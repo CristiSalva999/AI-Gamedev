@@ -44,6 +44,16 @@ export {
   smoothNoise,
 } from "./terrain.js";
 
+export type { ControlAction, ControlBinding, ControlProfile } from "./controls.js";
+export {
+  actionAxis,
+  controlProfileFor,
+  defaultSchemeForGenre,
+  isActionDown,
+  profileKeyCodes,
+} from "./controls.js";
+
+import type { ControlProfile } from "./controls.js";
 import type {
   FidelityLevel,
   GameDesignDoc,
@@ -248,6 +258,8 @@ export interface GameBlueprint {
   design?: GameDesignDoc;
   /** Structured world recipe driving terrain, zones, and post-FX. */
   worldRecipe?: WorldRecipe;
+  /** Resolved input map for this build (drive / fps / walk / …). */
+  controls?: ControlProfile;
   createdAt: number;
   updatedAt: number;
 }

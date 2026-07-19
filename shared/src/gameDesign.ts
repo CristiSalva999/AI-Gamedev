@@ -14,7 +14,7 @@ export type GenreKind =
   | "horror"
   | "sandbox";
 
-export type ControlScheme = "walk" | "drive" | "fly" | "twin_stick";
+export type ControlScheme = "walk" | "drive" | "fly" | "twin_stick" | "fps";
 
 export type CameraMode = "orbit_follow" | "chase" | "top_down" | "first_person";
 
@@ -62,6 +62,11 @@ export interface GameplaySystemsSpec {
   raceLaps?: number;
   checkpointCount?: number;
   collectibleGoal?: number;
+  /**
+   * Optional override bindings. When omitted the runtime builds them from
+   * {@link controlScheme} via `controlProfileFor`.
+   */
+  controlHints?: string[];
 }
 
 /**
