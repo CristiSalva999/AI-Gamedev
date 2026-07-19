@@ -1,41 +1,29 @@
-# ai_gamedev
+# AI GameDev
 
-Dev of games shouldn't be as chaotic as it is and hard for people to understand,
-or the best games will never be made by people who actually have the right
-storyline ideas.
+Chat-driven autonomous game development pipeline. Describe a game in the chatbot; the server builds concept → level → assets (`.glb`) → scripts → animations → playable package without further prompts. Steer live from chat. Download a zip and open `play.html` to play offline.
 
-This repo is an npm-workspaces monorepo with three packages:
-
-- `shared/` — TypeScript library with shared types and helpers (`@ai-gamedev/shared`), built with tsup.
-- `server/` — Express API (`@ai-gamedev/server`), built with tsup, dev via `tsx watch`.
-- `web/` — React + Vite app (`@ai-gamedev/web`).
-
-## Requirements
-
-- Node.js >= 22 (see `.nvmrc`)
-
-## Setup
+## Quick start
 
 ```bash
 npm install
+npm run dev
 ```
 
-## Development
+Open `http://localhost:5173`. Optional: start LM Studio on `http://localhost:1234/v1` (see `.env.example`).
+
+## Workspaces
+
+| Package | Role |
+|---------|------|
+| `shared/` | Domain types (`GameBlueprint`, `BuildEvent`, animation clips) |
+| `server/` | Express orchestrator + pipeline (`:3001`) |
+| `web/` | React chat + Three.js preview (`:5173`) |
+
+## Scripts
 
 ```bash
-npm run dev          # builds shared, then runs server (:3001) + web (:5173) together
-npm run dev:server   # server only
-npm run dev:web      # web only (proxies /api to the server)
-```
-
-The web app is served at http://localhost:5173 and proxies `/api` to the server
-at http://localhost:3001.
-
-## Quality gates
-
-```bash
-npm run lint         # ESLint (flat config) across the repo
-npm test             # Vitest across all workspaces
-npm run typecheck    # tsc --noEmit across all workspaces
-npm run build        # builds shared, server, and web
+npm run lint
+npm run typecheck
+npm run test
+npm run build
 ```

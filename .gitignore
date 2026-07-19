@@ -1,8 +1,32 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-coverage/
+*.tsbuildinfo
+
+# Runtime data / generated assets
+server/data/*.json
+server/data/games/
+!server/data/.gitkeep
+web/public/generated/
+
+# Logs
 *.log
-.DS_Store
+npm-debug.log*
+
+# Env
 .env
 .env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Test coverage
+coverage/
+
+# Vite
 .vite/

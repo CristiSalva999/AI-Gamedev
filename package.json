@@ -2,8 +2,8 @@
   "name": "ai-gamedev",
   "version": "0.1.0",
   "private": true,
+  "description": "AI-assisted game development pipeline: orchestrates a local LLM (LM Studio) and a (mock) Blender asset generator behind a Three.js game viewport.",
   "type": "module",
-  "description": "Monorepo for ai_gamedev: shared library, API server, and web app.",
   "engines": {
     "node": ">=22"
   },
@@ -13,20 +13,24 @@
     "web"
   ],
   "scripts": {
-    "build:shared": "npm run build --workspace @ai-gamedev/shared",
-    "build": "npm run build:shared && npm run build --workspace @ai-gamedev/server && npm run build --workspace @ai-gamedev/web",
-    "dev": "npm run build:shared && concurrently -n server,web -c blue,magenta \"npm run dev --workspace @ai-gamedev/server\" \"npm run dev --workspace @ai-gamedev/web\"",
-    "dev:server": "npm run build:shared && npm run dev --workspace @ai-gamedev/server",
-    "dev:web": "npm run build:shared && npm run dev --workspace @ai-gamedev/web",
-    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspace shared --if-present && npm run build --workspace server && npm run build --workspace web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
-    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present"
+    "lint:fix": "eslint . --fix",
+    "test": "npm run test --workspaces --if-present"
   },
   "devDependencies": {
-    "@eslint/js": "^9.15.0",
-    "concurrently": "^9.1.0",
-    "eslint": "^9.15.0",
-    "typescript": "^5.7.2",
-    "typescript-eslint": "^8.16.0"
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^22.7.5",
+    "concurrently": "^9.0.1",
+    "eslint": "^9.13.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.14",
+    "globals": "^15.11.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.10.0"
   }
 }

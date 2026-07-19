@@ -1,51 +1,463 @@
-export type GameGenre =
-  | "rpg"
-  | "platformer"
-  | "shooter"
-  | "puzzle"
-  | "strategy"
-  | "adventure";
+/**
+ * Shared domain contract between the frontend viewport and the backend
+ * orchestrator. Keeping a single source of truth here avoids drift between the
+ * two runtimes (DRY) and documents the pipeline's data model in one place.
+ */
 
-export interface Game {
+// ---------------------------------------------------------------------------
+// Core entities
+// ---------------------------------------------------------------------------
+
+export interface Asset {
   id: string;
-  title: string;
-  genre: GameGenre;
-  storyline: string;
-  createdAt: string;
+  name: string;
+  /** Path or URL to the rendered artifact (e.g. a .glb produced by Blender). */
+  source?: string;
+  /** Procedural description used by the viewport to build a placeholder mesh. */
+  spec: AssetSpec;
+  createdAt: number;
 }
 
-export interface NewGame {
-  title: string;
-  genre: GameGenre;
-  storyline: string;
+export interface Material {
+  id: string;
+  name: string;
+  color: string;
+  roughness?: number;
+  metalness?: number;
 }
 
-export const GAME_GENRES: readonly GameGenre[] = [
-  "rpg",
-  "platformer",
-  "shooter",
-  "puzzle",
-  "strategy",
-  "adventure",
-];
+export interface NPC {
+  id: string;
+  name: string;
+  role: string;
+  personality: string;
+  background: string;
+  relationships: Record<string, string>;
+}
 
-export function isGameGenre(value: string): value is GameGenre {
-  return (GAME_GENRES as readonly string[]).includes(value);
+export type PrimitiveShape = "box" | "sphere" | "cylinder" | "cone" | "torus";
+
+/**
+ * Minimal, renderer-agnostic description of a generated asset. In the full
+ * pipeline this is derived from Blender output; the mock generator produces it
+ * directly so the viewport can render something meaningful offline.
+ */
+export interface AssetSpec {
+  shape: PrimitiveShape;
+  color: string;
+  /** Uniform-ish dimensions in world units. */
+  size: { x: number; y: number; z: number };
+  roughness: number;
+  metalness: number;
+}
+
+export interface ConversationTurn {
+  role: "system" | "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
+// Animations (keyframe clips attached to entities / player)
+// ---------------------------------------------------------------------------
+
+export type AnimationTarget =
+  | "position.y"
+  | "position.x"
+  | "rotation.y"
+  | "scale.y";
+
+/** A single sampled property track. Values are relative to the entity's base pose. */
+export interface KeyframeTrack {
+  target: AnimationTarget;
+  /** Times in seconds. */
+  times: number[];
+  values: number[];
+  loop: boolean;
+}
+
+export interface AnimationClip {
+  id: string;
+  name: string;
+  duration: number;
+  tracks: KeyframeTrack[];
+}
+
+// ---------------------------------------------------------------------------
+// Game context (the shared "brain state")
+// ---------------------------------------------------------------------------
+
+export interface GameContext {
+  gameTitle: string;
+  gameGenre: string;
+  targetPlatform: string;
+  visualStyle: string;
+  colorPalette?: string[];
+
+  assets: {
+    models: Record<string, Asset>;
+    materials: Record<string, Material>;
+    characters: Record<string, NPC>;
+  };
+
+  mechanics: string[];
+  currentMission?: string;
+  playerInventory: string[];
+  worldState: Record<string, unknown>;
+
+  generatedScripts: Record<string, string>;
+  completedTasks: string[];
+  pendingTasks: string[];
+
+  conversationMemory: ConversationTurn[];
+
+  /** The most recently built game, rendered by the viewport. */
+  blueprint?: GameBlueprint;
+  /** Last successful package manifest (downloadable build). */
+  lastManifest?: BuildManifest;
+  /** Persisted chat transcript that drives the autonomous pipeline. */
+  chat: ChatMessage[];
+}
+
+// ---------------------------------------------------------------------------
+// Game blueprint (the buildable, renderable output of the pipeline)
+// ---------------------------------------------------------------------------
+
+export type LightingMood = "day" | "dusk" | "night" | "cave";
+
+export interface EnvironmentSpec {
+  lighting: LightingMood;
+  atmosphere: string;
+  fog: boolean;
+  groundColor: string;
+  skyColor: string;
+}
+
+export type EntityBehavior = "static" | "spin" | "bob" | "patrol" | "pulse";
+
+export interface BlueprintEntity {
+  id: string;
+  name: string;
+  spec: AssetSpec;
+  position: { x: number; y: number; z: number };
+  behavior: EntityBehavior;
+  /** Optional authored keyframe clip (drives the viewport beyond simple behaviors). */
+  animation?: AnimationClip;
+  interactive: boolean;
+}
+
+export interface PlayerSpec {
+  color: string;
+  /** Movement speed in world units per second. */
+  speed: number;
+  spawn: { x: number; y: number; z: number };
+  /** Idle / walk clips used by the playable preview. */
+  animations: {
+    idle: AnimationClip;
+    walk: AnimationClip;
+  };
+}
+
+export interface GameBlueprint {
+  gameTitle: string;
+  gameGenre: string;
+  visualStyle: string;
+  colorPalette: string[];
+  pitch: string;
+  environment: EnvironmentSpec;
+  entities: BlueprintEntity[];
+  player: PlayerSpec;
+  mechanics: string[];
+  scripts: Record<string, string>;
+  /** Shared animation library referenced by entities. */
+  animations: Record<string, AnimationClip>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Autonomous build pipeline (chat-driven)
+// ---------------------------------------------------------------------------
+
+export type BuildStage =
+  | "design"
+  | "world"
+  | "assets"
+  | "scripts"
+  | "animations"
+  | "player"
+  | "assemble"
+  | "package";
+
+export interface BuildManifest {
+  name: string;
+  slug: string;
+  branch: string;
+  /** True when a real git workspace/branch was created on disk. */
+  branchCreated: boolean;
+  entityCount: number;
+  assetCount: number;
+  scriptCount: number;
+  animationCount: number;
+  approxSizeKb: number;
+  /** Absolute or API-relative path to the packaged zip. */
+  downloadUrl: string;
+  /** On-disk game project directory (server-local). */
+  installPath: string;
+  packageFormat: "zip+html";
 }
 
 /**
- * Produce a short, human-readable pitch for a game. Used by both the server
- * (to log new games) and the web app (to preview a game before saving).
+ * Streamed pipeline event. The frontend renders these as chat updates and live
+ * "sneak peeks" of the game being built. Discriminated on `type`.
  */
-export function summarizeGame(game: Pick<Game, "title" | "genre" | "storyline">): string {
-  const genre = game.genre.charAt(0).toUpperCase() + game.genre.slice(1);
-  return `${game.title} — a ${genre} game: ${game.storyline}`;
+export type BuildEvent =
+  | { type: "message"; role: "assistant"; content: string }
+  | { type: "stage-start"; stage: BuildStage; label: string }
+  | { type: "sneak-peek"; stage: BuildStage; note: string; blueprint: GameBlueprint }
+  | { type: "stage-complete"; stage: BuildStage }
+  | { type: "artifact"; manifest: BuildManifest }
+  | { type: "done"; blueprint: GameBlueprint }
+  | { type: "error"; message: string };
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  at: number;
 }
 
-export function slugify(title: string): string {
-  return title
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+export interface ChatRequest {
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// API contracts
+// ---------------------------------------------------------------------------
+
+export type GenerateTask =
+  | "npcDialogue"
+  | "modelGeneration"
+  | "worldBuilding"
+  | "codeGeneration"
+  | "freeform";
+
+export interface GenerateRequest {
+  task: GenerateTask;
+  /** Raw prompt override. When omitted the server builds one from `params`. */
+  prompt?: string;
+  params?: Record<string, unknown>;
+}
+
+export type GenerationSource = "llm" | "mock" | "blender";
+
+export interface GenerateResponse {
+  text: string;
+  source: GenerationSource;
+  model: string;
+}
+
+export interface GenerateAssetRequest {
+  brief: string;
+}
+
+export interface GenerateAssetResponse {
+  asset: Asset;
+  /** The (mock or LLM-authored) Blender Python that "produced" the asset. */
+  blenderScript: string;
+  source: GenerationSource;
+}
+
+export interface HealthResponse {
+  status: "ok";
+  llm: {
+    configured: boolean;
+    reachable: boolean;
+    model: string;
+    baseUrl: string;
+  };
+  blender: {
+    available: boolean;
+    mode: "blender" | "procedural";
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers (safe to run in either runtime)
+// ---------------------------------------------------------------------------
+
+/** Factory for a fresh, valid {@link GameContext}. */
+export function createDefaultContext(
+  overrides: Partial<GameContext> = {},
+): GameContext {
+  return {
+    gameTitle: "Untitled Quest",
+    gameGenre: "Action RPG",
+    targetPlatform: "web",
+    visualStyle: "stylized low-poly",
+    colorPalette: ["#6c5ce7", "#00b894", "#fdcb6e", "#2d3436"],
+    assets: { models: {}, materials: {}, characters: {} },
+    mechanics: ["exploration", "dialogue"],
+    playerInventory: [],
+    worldState: {},
+    generatedScripts: {},
+    completedTasks: [],
+    pendingTasks: [],
+    conversationMemory: [],
+    chat: [],
+    ...overrides,
+  };
+}
+
+/** A small, deterministic sample NPC used by the UI and tests. */
+export function createSampleNpc(): NPC {
+  return {
+    id: "npc_elowen",
+    name: "Elowen",
+    role: "village herbalist",
+    personality: "wry, warm, secretly anxious",
+    background: "Keeper of the old greenhouse on the hill.",
+    relationships: { player: "curious", mayor: "distrustful" },
+  };
+}
+
+/** Idle bob for the player avatar when standing still. */
+export function createIdleClip(): AnimationClip {
+  return {
+    id: "anim_player_idle",
+    name: "idle",
+    duration: 2,
+    tracks: [
+      {
+        target: "position.y",
+        times: [0, 1, 2],
+        values: [0, 0.06, 0],
+        loop: true,
+      },
+    ],
+  };
+}
+
+/** Subtle vertical bounce while the player is moving. */
+export function createWalkClip(): AnimationClip {
+  return {
+    id: "anim_player_walk",
+    name: "walk",
+    duration: 0.5,
+    tracks: [
+      {
+        target: "position.y",
+        times: [0, 0.25, 0.5],
+        values: [0, 0.12, 0],
+        loop: true,
+      },
+      {
+        target: "scale.y",
+        times: [0, 0.25, 0.5],
+        values: [1, 0.94, 1],
+        loop: true,
+      },
+    ],
+  };
+}
+
+/** Spin clip used for decorative props. */
+export function createSpinClip(id: string): AnimationClip {
+  return {
+    id,
+    name: "spin",
+    duration: 4,
+    tracks: [
+      {
+        target: "rotation.y",
+        times: [0, 4],
+        values: [0, Math.PI * 2],
+        loop: true,
+      },
+    ],
+  };
+}
+
+/** Bob clip for interactive pickups. */
+export function createBobClip(id: string): AnimationClip {
+  return {
+    id,
+    name: "bob",
+    duration: 2,
+    tracks: [
+      {
+        target: "position.y",
+        times: [0, 1, 2],
+        values: [0, 0.35, 0],
+        loop: true,
+      },
+    ],
+  };
+}
+
+/** Side-to-side patrol for NPCs / creatures. */
+export function createPatrolClip(id: string): AnimationClip {
+  return {
+    id,
+    name: "patrol",
+    duration: 4,
+    tracks: [
+      {
+        target: "position.x",
+        times: [0, 2, 4],
+        values: [0, 2, 0],
+        loop: true,
+      },
+    ],
+  };
+}
+
+/** Scale pulse for magical props. */
+export function createPulseClip(id: string): AnimationClip {
+  return {
+    id,
+    name: "pulse",
+    duration: 1.5,
+    tracks: [
+      {
+        target: "scale.y",
+        times: [0, 0.75, 1.5],
+        values: [1, 1.18, 1],
+        loop: true,
+      },
+    ],
+  };
+}
+
+/**
+ * Linearly samples a keyframe track at `time` seconds. Pure so the Three.js
+ * viewport and the packaged HTML runner share the same math.
+ */
+export function sampleTrack(track: KeyframeTrack, time: number): number {
+  const { times, values } = track;
+  if (times.length === 0 || values.length === 0) return 0;
+  if (time <= times[0]) return values[0];
+  if (time >= times[times.length - 1]) return values[values.length - 1];
+  for (let i = 0; i < times.length - 1; i++) {
+    if (time >= times[i] && time <= times[i + 1]) {
+      const span = times[i + 1] - times[i] || 1;
+      const u = (time - times[i]) / span;
+      return values[i] + (values[i + 1] - values[i]) * u;
+    }
+  }
+  return values[0];
+}
+
+/** Samples every track of a clip at elapsed time `t` (loops when track.loop). */
+export function sampleClip(
+  clip: AnimationClip,
+  t: number,
+): Partial<Record<AnimationTarget, number>> {
+  const local = clip.duration > 0 ? t % clip.duration : 0;
+  const out: Partial<Record<AnimationTarget, number>> = {};
+  for (const track of clip.tracks) {
+    const time = track.loop ? local : Math.min(t, clip.duration);
+    out[track.target] = sampleTrack(track, time);
+  }
+  return out;
 }

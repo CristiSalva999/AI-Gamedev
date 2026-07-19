@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsup",
@@ -14,17 +14,17 @@
   "dependencies": {
     "@ai-gamedev/shared": "*",
     "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "express": "^4.21.1",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.10.1",
+    "@types/express": "^5.0.0",
+    "@types/jszip": "^3.4.0",
     "@types/supertest": "^6.0.2",
     "supertest": "^7.0.0",
-    "tsup": "^8.3.5",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.4"
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.1",
+    "vitest": "^2.1.3"
   }
 }
