@@ -51,6 +51,10 @@ describe("runBuild", () => {
     expect(blueprint.design?.systems.controlScheme).toBe("walk");
     expect(blueprint.controls?.scheme).toBe("walk");
     expect(blueprint.controls?.bindings.some((b) => b.action === "interact")).toBe(true);
+    expect(blueprint.runtime?.objectives.length).toBeGreaterThan(0);
+    expect(blueprint.runtime?.features.interact).toBe(true);
+    expect(blueprint.scripts["runtime.json"]).toBeTruthy();
+    expect(blueprint.scripts["gameplay.ts"]).toContain("createInitialState");
     expect(blueprint.worldRecipe?.zones.length).toBeGreaterThan(0);
     expect(blueprint.visualStyle.toLowerCase()).not.toContain("low-poly");
     expect(blueprint.entities.some((e) => e.spec.prefab === "stone_arch")).toBe(true);
@@ -71,6 +75,9 @@ describe("runBuild", () => {
     expect(blueprint.controls?.scheme).toBe("drive");
     expect(blueprint.controls?.bindings.some((b) => b.action === "handbrake")).toBe(true);
     expect(blueprint.controls?.bindings.some((b) => b.action === "accelerate")).toBe(true);
+    expect(blueprint.runtime?.racing?.laps).toBeGreaterThanOrEqual(3);
+    expect(blueprint.runtime?.features.handbrake).toBe(true);
+    expect(blueprint.scripts["gameplay.ts"]).toContain("onCheckpoint");
     expect(blueprint.environment.terrain?.kind).toBe("track_bowl");
     expect(blueprint.entities.some((e) => e.spec.prefab === "track_checkpoint")).toBe(true);
     expect(blueprint.entities.some((e) => e.spec.prefab === "track_barrier")).toBe(true);

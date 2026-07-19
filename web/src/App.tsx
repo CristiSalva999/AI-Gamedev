@@ -285,9 +285,20 @@ export function App(): JSX.Element {
       <main className="viewport-wrap">
         <div className="viewport" ref={containerRef} />
         <div className="hud">
-          {blueprint
-            ? `Click preview · ${blueprint.controls?.hudLine ?? "WASD move"} · drag to orbit`
-            : "Your game preview will appear here as the build streams"}
+          {blueprint ? (
+            <>
+              <div>
+                {blueprint.runtime
+                  ? `${blueprint.runtime.difficulty} · ${blueprint.runtime.objectives.map((o) => o.label).join(" · ")}`
+                  : blueprint.pitch}
+              </div>
+              <div>
+                Click preview · {blueprint.controls?.hudLine ?? "WASD move"} · drag to orbit
+              </div>
+            </>
+          ) : (
+            "Your game preview will appear here as the build streams"
+          )}
         </div>
       </main>
     </div>

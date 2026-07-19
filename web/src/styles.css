@@ -349,14 +349,22 @@ button:disabled {
   left: 16px;
   bottom: 14px;
   right: 16px;
-  max-width: 480px;
-  padding: 6px 12px;
+  max-width: 560px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: rgba(13, 14, 20, 0.7);
   border: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hud div:first-child {
+  color: var(--text);
+  font-weight: 600;
 }
 
 @media (max-width: 860px) {

@@ -28,6 +28,8 @@ import {
   slugify,
   type Theme,
 } from "./heuristics.js";
+import { buildScaffold } from "./scaffold.js";
+import { authorGameplayScript } from "./scriptAuthor.js";
 
 export interface PipelineDeps {
   llm: LLMClient;
@@ -225,24 +227,37 @@ export async function* runBuild(
   }
   yield { type: "stage-complete", stage: "assets" };
 
+  // --- Prefill complete game logic (before scripts so both share one scaffold)
+  const scaffold = buildScaffold(prompt, pack, design);
+  blueprint.runtime = scaffold.runtime;
+
   // --- Stage: scripts ------------------------------------------------------
-  yield { type: "stage-start", stage: "scripts", label: "Writing gameplay systems" };
+  yield { type: "stage-start", stage: "scripts", label: "Authoring complete gameplay systems" };
   const scriptTask =
     design.systems.controlScheme === "drive"
-      ? "arcade car driving with acceleration, steering, and checkpoint laps"
-      : "player movement, proximity interaction, and objective tracking";
-  const { text: script } = await deps.llm.generate(
+      ? "arcade car driving with acceleration, steering, handbrake, boost, and checkpoint laps"
+      : design.systems.controlScheme === "fps"
+        ? "fps movement, fire, reload, sprint, and objective tracking"
+        : "player movement, sprint, jump, proximity interaction, and objective tracking";
+  const { text: llmSnippet, source: scriptSource } = await deps.llm.generate(
     generatePrompt.codeGeneration(scriptTask, context),
     { task: "codeGeneration" },
   );
+  const script = authorGameplayScript({
+    design,
+    runtime: scaffold.runtime,
+    controls: blueprint.controls ?? controlProfileFor(design.systems.controlScheme),
+    llmSnippet: scriptSource === "llm" ? llmSnippet : undefined,
+  });
   blueprint.scripts["gameplay.ts"] = script;
   blueprint.scripts["design.json"] = JSON.stringify(design, null, 2);
   blueprint.scripts["world.json"] = JSON.stringify(recipe, null, 2);
+  blueprint.scripts["runtime.json"] = JSON.stringify(scaffold.runtime, null, 2);
   blueprint.updatedAt = Date.now();
   yield {
     type: "sneak-peek",
     stage: "scripts",
-    note: `Wrote gameplay.ts (${script.split("\n").length} lines).`,
+    note: `Prefill scaffold ready — ${scaffold.summary}. Wrote gameplay.ts (${script.split("\n").length} lines) with full rules/objectives/controls.`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "scripts" };
@@ -272,7 +287,7 @@ export async function* runBuild(
   yield {
     type: "sneak-peek",
     stage: "player",
-    note: `Player ready (WASD, speed ${blueprint.player.speed}, idle+walk clips).`,
+    note: `Player ready — ${blueprint.controls?.label ?? "controls"} · speed ${blueprint.player.speed} · HP ${scaffold.runtime.player.health} · ${blueprint.controls?.hudLine ?? ""}`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "player" };

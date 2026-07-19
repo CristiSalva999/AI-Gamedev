@@ -5,14 +5,24 @@ import {
   actionAxis,
   buildPrefab,
   controlProfileFor,
+  createSessionState,
+  formatSessionHud,
   isActionDown,
   profileKeyCodes,
   sampleClip,
   sampleTerrainHeight,
+  sessionOnCheckpoint,
+  sessionOnCollect,
+  sessionOnFire,
+  sessionOnReach,
+  sessionOnReload,
+  tickSession,
   type AnimationClip,
   type ControlProfile,
   type EntityBehavior,
   type GameBlueprint,
+  type GameRuntimeSpec,
+  type GameSessionState,
   type LightingMood,
   type TerrainSpec,
 } from "@ai-gamedev/shared";
@@ -96,6 +106,8 @@ export function useThreeScene(): ThreeScene {
   const verticalVelRef = useRef(0);
   const jumpOffsetRef = useRef(0);
   const crouchingRef = useRef(false);
+  const runtimeRef = useRef<GameRuntimeSpec | null>(null);
+  const sessionRef = useRef<GameSessionState | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -233,6 +245,16 @@ export function useThreeScene(): ThreeScene {
     container.addEventListener("focus", onFocus);
     container.addEventListener("blur", onBlur);
 
+    const syncHud = () => {
+      if (!lootElRef.current || !sessionRef.current || !runtimeRef.current) return;
+      const session = sessionRef.current;
+      if (session.status === "won" || session.status === "lost") {
+        lootElRef.current.textContent = `${session.status.toUpperCase()} · ${session.message}`;
+        return;
+      }
+      lootElRef.current.textContent = formatSessionHud(session, runtimeRef.current);
+    };
+
     const tryCollectNear = () => {
       const near = nearEntityRef.current;
       if (!near) return;
@@ -241,14 +263,18 @@ export function useThreeScene(): ThreeScene {
       data.collected = true;
       collectedRef.current.add(data.entityId);
       near.visible = false;
-      if (lootElRef.current) {
-        lootElRef.current.textContent = `Loot: ${collectedRef.current.size}`;
+      if (sessionRef.current && runtimeRef.current) {
+        const isLandmark = /arch|well|statue|gate|pad/i.test(data.name);
+        sessionRef.current = isLandmark
+          ? sessionOnReach(sessionRef.current, runtimeRef.current)
+          : sessionOnCollect(sessionRef.current, runtimeRef.current);
+        syncHud();
       }
       if (hintElRef.current) {
         hintElRef.current.hidden = false;
-        hintElRef.current.textContent = `Collected: ${data.name}`;
+        hintElRef.current.textContent = sessionRef.current?.message ?? `Collected: ${data.name}`;
         window.setTimeout(() => {
-          if (hintElRef.current?.textContent?.startsWith("Collected")) {
+          if (hintElRef.current && !hintElRef.current.textContent?.startsWith("[")) {
             hintElRef.current.hidden = true;
           }
         }, 1400);
@@ -298,6 +324,16 @@ export function useThreeScene(): ThreeScene {
         e.preventDefault();
         tryCollectNear();
       }
+      if (
+        runtimeRef.current?.features.reload &&
+        isActionDown(profile, "reload", new Set([e.code])) &&
+        sessionRef.current &&
+        runtimeRef.current
+      ) {
+        e.preventDefault();
+        sessionRef.current = sessionOnReload(sessionRef.current, runtimeRef.current);
+        syncHud();
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       keysRef.current.delete(e.code);
@@ -318,6 +354,11 @@ export function useThreeScene(): ThreeScene {
         applyEntityMotion(child, t, delta);
       }
       stepProjectiles(projectiles, delta);
+
+      if (sessionRef.current && runtimeRef.current && sessionRef.current.status === "playing") {
+        sessionRef.current = tickSession(sessionRef.current, runtimeRef.current, delta);
+        if (t % 0.25 < delta) syncHud();
+      }
 
       const bound = boundRef.current;
       let moving = false;
@@ -372,14 +413,19 @@ export function useThreeScene(): ThreeScene {
 
           if (scheme === "fps" || scheme === "twin_stick") {
             fireCooldownRef.current = Math.max(0, fireCooldownRef.current - delta);
+            const cooldown = runtimeRef.current?.combat?.fireCooldownSec ?? 0.18;
             if (isActionDown(profile, "fire", keys) && fireCooldownRef.current <= 0) {
-              spawnProjectile(projectiles, playerRef.current);
-              fireCooldownRef.current = 0.18;
-              if (lootElRef.current && !lootElRef.current.textContent?.startsWith("Checkpoints")) {
-                const prev = Number(lootElRef.current.dataset.shots ?? "0") + 1;
-                lootElRef.current.dataset.shots = String(prev);
-                lootElRef.current.textContent = `Shots: ${prev}`;
+              if (sessionRef.current && runtimeRef.current) {
+                const before = sessionRef.current.ammo;
+                sessionRef.current = sessionOnFire(sessionRef.current, runtimeRef.current);
+                if (sessionRef.current.ammo < before || sessionRef.current.message === "Fire!") {
+                  spawnProjectile(projectiles, playerRef.current);
+                }
+                syncHud();
+              } else {
+                spawnProjectile(projectiles, playerRef.current);
               }
+              fireCooldownRef.current = cooldown;
             }
           }
         }
@@ -452,7 +498,16 @@ export function useThreeScene(): ThreeScene {
         entities.children,
         profile.scheme,
         checkpointsHitRef,
-        lootElRef.current,
+        (id) => {
+          if (sessionRef.current && runtimeRef.current) {
+            sessionRef.current = sessionOnCheckpoint(
+              sessionRef.current,
+              runtimeRef.current,
+              id,
+            );
+            syncHud();
+          }
+        },
       );
 
       controls.update();
@@ -560,6 +615,7 @@ export function useThreeScene(): ThreeScene {
       controlProfileFor(blueprint.design?.systems.controlScheme ?? "walk");
     controlProfileRef.current = profile;
     controlCodesRef.current = profileKeyCodes(profile);
+    runtimeRef.current = blueprint.runtime ?? null;
 
     const nextAvatar =
       profile.scheme === "drive" ? "car" : (blueprint.player.avatar ?? "capsule");
@@ -582,20 +638,22 @@ export function useThreeScene(): ThreeScene {
       verticalVelRef.current = 0;
       jumpOffsetRef.current = 0;
       fireCooldownRef.current = 0;
+      if (blueprint.runtime) {
+        sessionRef.current = createSessionState(blueprint.runtime);
+        if (lootElRef.current) {
+          lootElRef.current.textContent = formatSessionHud(
+            sessionRef.current,
+            blueprint.runtime,
+          );
+        }
+      } else {
+        sessionRef.current = null;
+      }
       if (projectilesRef.current) {
         for (const child of [...projectilesRef.current.children]) {
           projectilesRef.current.remove(child);
           disposeObject3D(child);
         }
-      }
-      if (lootElRef.current) {
-        lootElRef.current.dataset.shots = "0";
-        lootElRef.current.textContent =
-          profile.scheme === "drive"
-            ? "Checkpoints: 0"
-            : profile.scheme === "fps" || profile.scheme === "twin_stick"
-              ? "Shots: 0"
-              : "Loot: 0";
       }
       player.position.set(
         blueprint.player.spawn.x,
@@ -815,9 +873,9 @@ function updateCheckpointProgress(
   children: THREE.Object3D[],
   scheme: ControlProfile["scheme"],
   checkpointsHit: MutableRefObject<Set<string>>,
-  lootEl: HTMLDivElement | null,
+  onHit: (entityId: string) => void,
 ): void {
-  if (!player || scheme !== "drive" || !lootEl) return;
+  if (!player || scheme !== "drive") return;
   for (const child of children) {
     const data = child.userData as EntityUserData;
     if (!data.interactive || checkpointsHit.current.has(data.entityId)) continue;
@@ -827,7 +885,7 @@ function updateCheckpointProgress(
     const dist = Math.hypot(child.position.x - player.position.x, child.position.z - player.position.z);
     if (dist < 3.2) {
       checkpointsHit.current.add(data.entityId);
-      lootEl.textContent = `Checkpoints: ${checkpointsHit.current.size}`;
+      onHit(data.entityId);
     }
   }
 }

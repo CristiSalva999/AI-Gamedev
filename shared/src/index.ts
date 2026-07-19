@@ -53,6 +53,29 @@ export {
   profileKeyCodes,
 } from "./controls.js";
 
+export type {
+  CombatRules,
+  ExplorationRules,
+  GameRuntimeSpec,
+  GameSessionState,
+  NarrativeBeats,
+  ObjectiveType,
+  PlayerStatsSpec,
+  RacingRules,
+  RuntimeObjective,
+  ScoringRules,
+} from "./gameRuntime.js";
+export { createSessionState, objectivesComplete } from "./gameRuntime.js";
+export {
+  formatSessionHud,
+  sessionOnCheckpoint,
+  sessionOnCollect,
+  sessionOnFire,
+  sessionOnReach,
+  sessionOnReload,
+  tickSession,
+} from "./sessionLogic.js";
+
 import type { ControlProfile } from "./controls.js";
 import type {
   FidelityLevel,
@@ -61,6 +84,7 @@ import type {
   TerrainSpec,
   WorldRecipe,
 } from "./gameDesign.js";
+import type { GameRuntimeSpec } from "./gameRuntime.js";
 import type { MeshPart, PrefabKind, PrimitiveShape } from "./prefabs.js";
 
 // ---------------------------------------------------------------------------
@@ -260,6 +284,11 @@ export interface GameBlueprint {
   worldRecipe?: WorldRecipe;
   /** Resolved input map for this build (drive / fps / walk / …). */
   controls?: ControlProfile;
+  /**
+   * Prefill complete game logic (objectives, stats, win/lose, combat/race
+   * rules) modeled on the user prompt + genre pack.
+   */
+  runtime?: GameRuntimeSpec;
   createdAt: number;
   updatedAt: number;
 }
