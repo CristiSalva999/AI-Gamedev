@@ -48,10 +48,13 @@ function extractQuoted(text: string, fallback: string): string {
 }
 
 function mockDialogue(prompt: string): string {
-  const action = extractQuoted(prompt, "your arrival");
+  // Prefer the explicit PLAYER ACTION field; fall back to any quoted phrase.
+  const actionMatch = prompt.match(/PLAYER ACTION:\s*"([^"]+)"/);
+  const action = actionMatch?.[1] ?? extractQuoted(prompt, "your arrival");
   return (
-    `You again? Careful where you step — ${action} has a way of waking things ` +
-    `best left sleeping. Bring me three moonpetals and I'll tell you what I know.`
+    `Ah, so the traveler ${action}? Bold of you. Careful where you step — ` +
+    `such gestures have a way of waking things best left sleeping. Bring me ` +
+    `three moonpetals and I'll tell you what I know.`
   );
 }
 
