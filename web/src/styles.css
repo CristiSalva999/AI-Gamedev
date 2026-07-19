@@ -1,0 +1,136 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top, #1b1030 0%, #0b0a15 55%);
+  color: #f4f2ff;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.hero h1 {
+  font-size: 2.4rem;
+  margin: 0;
+  background: linear-gradient(90deg, #b388ff, #7c4dff, #4dd0e1);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero p {
+  color: #c3bde0;
+  margin-top: 0.4rem;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+  backdrop-filter: blur(6px);
+}
+
+.card h2 {
+  margin-top: 0;
+}
+
+.form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.form label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: #c3bde0;
+}
+
+input,
+select,
+textarea {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+  color: #fff;
+  font-size: 1rem;
+}
+
+textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.preview {
+  font-style: italic;
+  color: #8de0ff;
+  margin: 0;
+}
+
+button {
+  justify-self: start;
+  background: linear-gradient(90deg, #7c4dff, #4dd0e1);
+  border: none;
+  border-radius: 10px;
+  color: #0b0a15;
+  font-weight: 700;
+  padding: 0.65rem 1.4rem;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+.error {
+  color: #ff8a80;
+  margin: 0;
+}
+
+.games {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.game {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 12px;
+  padding: 0.9rem;
+}
+
+.game p {
+  margin: 0.25rem 0 0;
+  color: #c3bde0;
+}
+
+.badge {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(124, 77, 255, 0.25);
+  color: #d1c4ff;
+  white-space: nowrap;
+}
