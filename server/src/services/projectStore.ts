@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createDefaultContext,
@@ -104,6 +104,51 @@ export class ProjectStore {
     await this.writeContext(id, context);
     this.metas.set(id, meta);
     return { meta, context };
+  }
+
+  /**
+   * Edit a project's scope (setup answers). Updates metadata and keeps the
+   * stored context's title/genre in sync so a subsequent build uses the new
+   * scope. Returns the updated metadata, or undefined if the project is gone.
+   */
+  async update(id: string, patch: Partial<GameSetupAnswers>): Promise<ProjectMeta | undefined> {
+    await this.init();
+    const meta = this.metas.get(id);
+    if (!meta) return undefined;
+
+    const setup = { ...meta.setup } as Record<string, unknown>;
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) setup[key] = value;
+    }
+    const nextSetup = setup as unknown as GameSetupAnswers;
+
+    const updated: ProjectMeta = {
+      ...meta,
+      setup: nextSetup,
+      title: nextSetup.title?.trim() || meta.title,
+      genre: nextSetup.genre || meta.genre,
+      updatedAt: Date.now(),
+    };
+
+    // Keep the persisted context aligned with the new scope.
+    const record = await this.get(id);
+    if (record) {
+      record.context.gameTitle = updated.title;
+      record.context.gameGenre = updated.genre;
+      await this.writeContext(id, record.context);
+    }
+    await this.writeMeta(updated);
+    this.metas.set(id, updated);
+    return updated;
+  }
+
+  /** Delete a project and its entire workspace directory. */
+  async remove(id: string): Promise<boolean> {
+    await this.init();
+    if (!this.metas.has(id)) return false;
+    this.metas.delete(id);
+    await rm(this.dir(id), { recursive: true, force: true });
+    return true;
   }
 
   /** Persist a project's context and refresh derived metadata. */

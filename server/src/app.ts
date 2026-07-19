@@ -6,6 +6,7 @@ import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import {
   composeSetupPrompt,
+  GENRE_KINDS,
   type BuildEvent,
   type ChatMessage,
   type ChatRequest,
@@ -246,6 +247,43 @@ export function createApp(deps: AppDependencies): Express {
           return;
         }
         res.json({ meta: record.meta, context: record.context });
+      }),
+    );
+
+    app.patch(
+      "/api/projects/:id",
+      asyncHandler(async (req, res) => {
+        const id = String(req.params.id);
+        const patch = (req.body ?? {}) as Partial<GameSetupAnswers>;
+        if (
+          patch.genre !== undefined &&
+          !(GENRE_KINDS as readonly string[]).includes(String(patch.genre))
+        ) {
+          res.status(400).json({ error: "invalid genre" });
+          return;
+        }
+        if (patch.title !== undefined && !String(patch.title).trim()) {
+          res.status(400).json({ error: "title cannot be empty" });
+          return;
+        }
+        const meta = await projectStore.update(id, patch);
+        if (!meta) {
+          res.status(404).json({ error: "Project not found" });
+          return;
+        }
+        res.json(meta);
+      }),
+    );
+
+    app.delete(
+      "/api/projects/:id",
+      asyncHandler(async (req, res) => {
+        const removed = await projectStore.remove(String(req.params.id));
+        if (!removed) {
+          res.status(404).json({ error: "Project not found" });
+          return;
+        }
+        res.status(204).end();
       }),
     );
 
