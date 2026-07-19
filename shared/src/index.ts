@@ -37,6 +37,20 @@ export {
 } from "./gameDesign.js";
 
 export type {
+  PlannedSubRequest,
+  PlannedTask,
+  RequestPlan,
+} from "./planning.js";
+export {
+  coercePlan,
+  extractObjective,
+  extractSetting,
+  extractTitle,
+  heuristicPlan,
+  summarizePlan,
+} from "./planning.js";
+
+export type {
   GameSetupAnswers,
   ProjectMeta,
   SetupQuestion,
@@ -99,6 +113,7 @@ import type {
   WorldRecipe,
 } from "./gameDesign.js";
 import type { GameRuntimeSpec } from "./gameRuntime.js";
+import type { RequestPlan } from "./planning.js";
 import type { MeshPart, PrefabKind, PrimitiveShape } from "./prefabs.js";
 
 // ---------------------------------------------------------------------------
@@ -292,6 +307,8 @@ export interface GameBlueprint {
   scripts: Record<string, string>;
   /** Shared animation library referenced by entities. */
   animations: Record<string, AnimationClip>;
+  /** Clarified request + hierarchical decomposition that drove this build. */
+  plan?: RequestPlan;
   /** Structured design doc from the LLM / mock design pass. */
   design?: GameDesignDoc;
   /** Structured world recipe driving terrain, zones, and post-FX. */
@@ -312,6 +329,7 @@ export interface GameBlueprint {
 // ---------------------------------------------------------------------------
 
 export type BuildStage =
+  | "plan"
   | "design"
   | "world"
   | "assets"
