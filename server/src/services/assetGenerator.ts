@@ -25,11 +25,11 @@ export interface AssetGenerator {
 }
 
 const SHAPE_KEYWORDS: Array<[PrimitiveShape, string[]]> = [
-  ["sphere", ["ball", "orb", "sphere", "rock", "boulder", "potion", "gem", "moon"]],
-  ["cylinder", ["barrel", "pillar", "column", "trunk", "bottle", "tower", "log", "can"]],
-  ["cone", ["cone", "tent", "spike", "pine", "roof", "hat", "dart"]],
+  ["sphere", ["ball", "orb", "sphere", "rock", "boulder", "potion", "gem", "moon", "moss", "bush", "shrub"]],
+  ["cylinder", ["barrel", "pillar", "column", "trunk", "bottle", "tower", "log", "can", "well", "statue", "torch", "lantern", "pot", "cactus", "fountain", "stump", "pad"]],
+  ["cone", ["cone", "tent", "spike", "pine", "roof", "hat", "dart", "tree", "spire", "mushroom"]],
   ["torus", ["ring", "torus", "donut", "wheel", "loop"]],
-  ["box", ["crate", "box", "chest", "cube", "block", "brick", "table", "wall"]],
+  ["box", ["crate", "box", "chest", "cube", "block", "brick", "table", "wall", "arch", "gate", "fence", "gravestone", "stone", "monument"]],
 ];
 
 const COLOR_KEYWORDS: Array<[string, string[]]> = [
