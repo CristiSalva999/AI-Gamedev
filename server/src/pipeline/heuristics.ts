@@ -340,17 +340,16 @@ function forestAmbient(
 ): PlannedPlacement[] {
   const occupied = existing.map((p) => p.position);
   const out: PlannedPlacement[] = [];
-  const treeRing = 12;
-  // Outer tree ring — creates a forest edge around the clearing.
-  for (let i = 0; i < 10 && out.length < max; i++) {
-    const angle = (i / 10) * Math.PI * 2 + 0.2;
-    const radius = treeRing + (i % 3) * 1.4;
+  // Outer tree ring — dense forest edge around the clearing.
+  for (let i = 0; i < 14 && out.length < max; i++) {
+    const angle = (i / 14) * Math.PI * 2 + 0.15;
+    const radius = 11.5 + (i % 4) * 1.15;
     const pos = {
       x: Number((Math.cos(angle) * radius).toFixed(2)),
       y: 0,
-      z: Number((Math.sin(angle) * radius - 2).toFixed(2)),
+      z: Number((Math.sin(angle) * radius - 2.5).toFixed(2)),
     };
-    if (tooClose(pos, occupied, 2.2)) continue;
+    if (tooClose(pos, occupied, 1.9)) continue;
     const brief = i % 3 === 0 ? "pine tree" : "ancient tree";
     out.push({
       brief,
@@ -362,6 +361,28 @@ function forestAmbient(
     occupied.push(pos);
   }
 
+  // Inner grove — trees flanking the path so the walk to the ruins feels wooded.
+  const grove: Array<{ x: number; z: number; brief: string }> = [
+    { x: -3.8, z: -1.5, brief: "ancient tree" },
+    { x: 4.2, z: -2.0, brief: "pine tree" },
+    { x: -5.5, z: -5.0, brief: "pine tree" },
+    { x: 6.0, z: -6.2, brief: "ancient tree" },
+    { x: -7.2, z: -8.5, brief: "ancient tree" },
+    { x: 7.0, z: -9.0, brief: "pine tree" },
+  ];
+  for (const spot of grove) {
+    if (out.length >= max) break;
+    if (tooClose(spot, occupied, 2.0)) continue;
+    out.push({
+      brief: spot.brief,
+      position: { x: spot.x, y: 0, z: spot.z },
+      rotationY: spot.x * 0.2,
+      role: "ambient",
+      interactive: false,
+    });
+    occupied.push(spot);
+  }
+
   const fillers = [
     "bush",
     "mossy boulder",
@@ -371,25 +392,27 @@ function forestAmbient(
     "stone pillar",
     "ruin wall",
     "glowing mushroom",
+    "bush",
+    "rubble",
   ];
   for (let i = 0; i < fillers.length && out.length < max; i++) {
-    const brief = briefs[i % briefs.length] ?? fillers[i];
-    const angle = 0.7 + i * 0.95;
-    const radius = 5 + (i % 4) * 2.5;
+    const brief = fillers[i] ?? briefs[i % briefs.length];
+    const angle = 0.7 + i * 0.85;
+    const radius = 4.5 + (i % 5) * 2.1;
     const pos = {
-      x: Number((Math.cos(angle) * radius + (i % 2 === 0 ? 1.5 : -1)).toFixed(2)),
+      x: Number((Math.cos(angle) * radius + (i % 2 === 0 ? 1.2 : -1.1)).toFixed(2)),
       y: 0,
-      z: Number((Math.sin(angle) * radius - 3).toFixed(2)),
+      z: Number((Math.sin(angle) * radius - 3.5).toFixed(2)),
     };
-    if (tooClose(pos, occupied, 1.8)) continue;
+    if (tooClose(pos, occupied, 1.6)) continue;
     const loot = /\b(mushroom|moss)\b/.test(brief);
     out.push({
-      brief: fillers[i] ?? brief,
+      brief,
       position: pos,
       rotationY: angle * 0.5,
       role: loot ? "loot" : "ambient",
       interactive: loot,
-      interactHint: loot ? hintFor(fillers[i] ?? brief) : undefined,
+      interactHint: loot ? hintFor(brief) : undefined,
     });
     occupied.push(pos);
   }

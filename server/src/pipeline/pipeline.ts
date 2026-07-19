@@ -43,7 +43,7 @@ export interface PipelineOptions {
 }
 
 const MAX_LANDMARKS_DEFAULT = 8;
-const MAX_AMBIENT_DEFAULT = 18;
+const MAX_AMBIENT_DEFAULT = 28;
 
 const sleep = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
