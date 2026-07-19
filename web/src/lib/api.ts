@@ -1,12 +1,21 @@
 import type {
   BuildEvent,
   GameContext,
+  GameSetupAnswers,
   GenerateAssetResponse,
   GenerateRequest,
   GenerateResponse,
   HealthResponse,
+  ProjectMeta,
 } from "@ai-gamedev/shared";
 import { parseSseBuffer } from "./sse.js";
+
+export interface ProjectDetail {
+  meta: ProjectMeta;
+  context: GameContext;
+}
+
+export type CreatedProject = ProjectMeta & { initialPrompt: string };
 
 /**
  * Thin, typed client for the orchestration API. Prefer same-origin `/api/*`
@@ -49,16 +58,32 @@ export const api = {
   /** Absolute-or-relative URL for a packaged zip download. */
   artifactUrl: (downloadPath: string): string => `${BASE}${downloadPath}`,
 
+  /** List saved game projects (Cursor-style sidebar). */
+  listProjects: () => json<ProjectMeta[]>("/api/projects"),
+
+  /** Load a project's metadata + persisted context (blueprint + chat). */
+  getProject: (id: string) => json<ProjectDetail>(`/api/projects/${id}`),
+
+  /** Create a project from setup wizard answers. */
+  createProject: (answers: GameSetupAnswers) =>
+    json<CreatedProject>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(answers),
+    }),
+
   /**
    * Sends a chat message and streams the autonomous pipeline's build events.
-   * `onEvent` is called for each event as it arrives.
+   * `onEvent` is called for each event as it arrives. When `projectId` is set,
+   * the message is scoped to that project's isolated context.
    */
   chat: async (
     message: string,
     onEvent: (event: BuildEvent) => void,
     signal?: AbortSignal,
+    projectId?: string,
   ): Promise<void> => {
-    const res = await fetch(`${BASE}/api/chat`, {
+    const path = projectId ? `/api/projects/${projectId}/chat` : "/api/chat";
+    const res = await fetch(`${BASE}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
