@@ -1,0 +1,32 @@
+{
+  "name": "ai-gamedev",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monorepo for ai_gamedev: shared library, API server, and web app.",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace @ai-gamedev/shared",
+    "build": "npm run build:shared && npm run build --workspace @ai-gamedev/server && npm run build --workspace @ai-gamedev/web",
+    "dev": "npm run build:shared && concurrently -n server,web -c blue,magenta \"npm run dev --workspace @ai-gamedev/server\" \"npm run dev --workspace @ai-gamedev/web\"",
+    "dev:server": "npm run build:shared && npm run dev --workspace @ai-gamedev/server",
+    "dev:web": "npm run build:shared && npm run dev --workspace @ai-gamedev/web",
+    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "lint": "eslint .",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "concurrently": "^9.1.0",
+    "eslint": "^9.15.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  }
+}
