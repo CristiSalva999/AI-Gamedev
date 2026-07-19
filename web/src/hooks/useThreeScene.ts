@@ -211,24 +211,6 @@ export function useThreeScene(): ThreeScene {
     container.addEventListener("focus", onFocus);
     container.addEventListener("blur", onBlur);
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Never steal keys while the user is composing a chat message.
-      if (isTypingTarget(e.target) || !playFocusedRef.current) return;
-      if (e.code in MOVE_KEYS) {
-        e.preventDefault();
-        keysRef.current.add(e.code);
-      }
-      if (e.code === "KeyE") {
-        e.preventDefault();
-        tryCollectNear();
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      keysRef.current.delete(e.code);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-
     const tryCollectNear = () => {
       const near = nearEntityRef.current;
       if (!near) return;
@@ -250,6 +232,53 @@ export function useThreeScene(): ThreeScene {
         }, 1400);
       }
     };
+
+    const updateProximityHint = (
+      player: THREE.Group | null,
+      children: THREE.Object3D[],
+    ) => {
+      if (!player || !hintElRef.current) return;
+      let best: THREE.Object3D | null = null;
+      let bestDist = 2.1;
+      for (const child of children) {
+        const data = child.userData as EntityUserData;
+        if (!data.interactive || data.collected || !child.visible) continue;
+        const dist = Math.hypot(
+          child.position.x - player.position.x,
+          child.position.z - player.position.z,
+        );
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = child;
+        }
+      }
+      nearEntityRef.current = best;
+      if (best) {
+        const data = best.userData as EntityUserData;
+        hintElRef.current.hidden = false;
+        hintElRef.current.textContent = `[E] ${data.hint ?? data.name}`;
+      } else if (!hintElRef.current.textContent?.startsWith("Collected")) {
+        hintElRef.current.hidden = true;
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Never steal keys while the user is composing a chat message.
+      if (isTypingTarget(e.target) || !playFocusedRef.current) return;
+      if (e.code in MOVE_KEYS) {
+        e.preventDefault();
+        keysRef.current.add(e.code);
+      }
+      if (e.code === "KeyE") {
+        e.preventDefault();
+        tryCollectNear();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      keysRef.current.delete(e.code);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
 
     let raf = 0;
     const clock = new THREE.Clock();
@@ -313,35 +342,6 @@ export function useThreeScene(): ThreeScene {
       renderer.render(scene, camera);
     };
     animate();
-
-    const updateProximityHint = (
-      player: THREE.Group | null,
-      children: THREE.Object3D[],
-    ) => {
-      if (!player || !hintElRef.current) return;
-      let best: THREE.Object3D | null = null;
-      let bestDist = 2.1;
-      for (const child of children) {
-        const data = child.userData as EntityUserData;
-        if (!data.interactive || data.collected || !child.visible) continue;
-        const dist = Math.hypot(
-          child.position.x - player.position.x,
-          child.position.z - player.position.z,
-        );
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = child;
-        }
-      }
-      nearEntityRef.current = best;
-      if (best) {
-        const data = best.userData as EntityUserData;
-        hintElRef.current.hidden = false;
-        hintElRef.current.textContent = `[E] ${data.hint ?? data.name}`;
-      } else if (!hintElRef.current.textContent?.startsWith("Collected")) {
-        hintElRef.current.hidden = true;
-      }
-    };
 
     const onResize = () => {
       if (!container.clientWidth || !container.clientHeight) return;
