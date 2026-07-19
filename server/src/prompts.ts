@@ -1,4 +1,4 @@
-import type { FidelityLevel, GameContext, GenreKind, NPC } from "@ai-gamedev/shared";
+import { GENRE_KINDS, type FidelityLevel, type GameContext, type GenreKind, type NPC } from "@ai-gamedev/shared";
 
 /**
  * Prompt-engineering layer: turns typed game state into precise, context-aware
@@ -10,6 +10,42 @@ import type { FidelityLevel, GameContext, GenreKind, NPC } from "@ai-gamedev/sha
  * supply the same shapes offline.
  */
 export const generatePrompt = {
+  /**
+   * Ask the model to understand and decompose the request, then merge it back
+   * into a single goal-focused plan. This is the "layer of thought" that
+   * identifies what is actually being requested before any building starts.
+   */
+  planning: (prompt: string): string => `
+You are a senior game director. Analyze the following game request and produce a focused build plan.
+
+Think in this order, then MERGE everything back into one coherent goal:
+1. Clarify the request in its entirety (what game does the player actually want?).
+2. Break the request into a few high-level SUB-REQUESTS.
+3. Break each sub-request into TASKS.
+4. Break each task into concrete SUBTASKS.
+5. Keep every level focused on the single core goal — ignore incidental descriptive fluff.
+
+Pick the genre by the player's CORE intent and mechanics, not stray words. It MUST be exactly one of:
+${GENRE_KINDS.join(", ")}.
+
+USER REQUEST:
+"""
+${prompt.slice(0, 6000)}
+"""
+
+Return ONLY JSON in this exact shape:
+{
+  "goal": string,                     // one focused sentence capturing the whole request
+  "genre": one of [${GENRE_KINDS.join(", ")}],
+  "title": string,
+  "setting": string,
+  "objective": string,                // what the player must do
+  "keyFeatures": string[],            // merged, goal-focused
+  "subRequests": [
+    { "title": string, "tasks": [ { "title": string, "subtasks": string[] } ] }
+  ]
+}`.trim(),
+
   npcDialogue: (npc: NPC, context: GameContext, playerAction: string): string => `
 You are generating dialogue for "${npc.name}", a ${npc.role} in ${context.gameTitle}.
 
