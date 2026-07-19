@@ -36,6 +36,10 @@ describe("GET /api/health", () => {
       reachable: false,
       model: "fake-model",
     });
+    expect(res.body.blender).toMatchObject({
+      available: false,
+      mode: "procedural",
+    });
   });
 });
 

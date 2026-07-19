@@ -36,6 +36,7 @@ export function App(): JSX.Element {
   const [manifest, setManifest] = useState<BuildManifest | null>(null);
   const [llmReachable, setLlmReachable] = useState<boolean | null>(null);
   const [model, setModel] = useState("");
+  const [blenderMode, setBlenderMode] = useState<"blender" | "procedural" | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const pushLine = useCallback((line: Omit<ChatLine, "id">) => {
@@ -54,10 +55,12 @@ export function App(): JSX.Element {
         if (cancelled) return;
         setLlmReachable(health.llm.reachable);
         setModel(health.llm.model);
+        setBlenderMode(health.blender.mode);
         if (ctx.blueprint) {
           setBlueprint(ctx.blueprint);
           setBlueprintState(ctx.blueprint);
         }
+        if (ctx.lastManifest) setManifest(ctx.lastManifest);
         for (const msg of ctx.chat) {
           pushLine({ kind: msg.role === "user" ? "user" : "assistant", text: msg.content });
         }
@@ -96,7 +99,7 @@ export function App(): JSX.Element {
           setManifest(event.manifest);
           pushLine({
             kind: "artifact",
-            text: `Packaged "${event.manifest.name}" on ${event.manifest.branch} · ${event.manifest.entityCount} objects · ~${event.manifest.approxSizeKb} KB`,
+            text: `Packaged "${event.manifest.name}" on ${event.manifest.branch} · ${event.manifest.entityCount} objects · ${event.manifest.animationCount} clips · ~${event.manifest.approxSizeKb} KB`,
           });
           break;
         case "done":
@@ -134,18 +137,13 @@ export function App(): JSX.Element {
     [building, handleEvent, pushLine],
   );
 
-  const downloadBlueprint = useCallback(() => {
-    if (!blueprint) return;
-    const blob = new Blob([JSON.stringify(blueprint, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
+  const downloadZip = useCallback(() => {
+    if (!manifest) return;
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `${blueprint.gameTitle.replace(/\s+/g, "_").toLowerCase()}.aigame.json`;
+    a.href = manifest.downloadUrl;
+    a.download = `${manifest.slug}.zip`;
     a.click();
-    URL.revokeObjectURL(url);
-  }, [blueprint]);
+  }, [manifest]);
 
   const suggestions = useMemo(
     () => (blueprint ? STEER_SUGGESTIONS : BUILD_SUGGESTIONS),
@@ -157,7 +155,7 @@ export function App(): JSX.Element {
       <aside className="panel">
         <header className="brand">
           <h1>AI GameDev</h1>
-          <StatusBadge reachable={llmReachable} model={model} />
+          <StatusBadge reachable={llmReachable} model={model} blenderMode={blenderMode} />
         </header>
 
         {blueprint && (
@@ -166,8 +164,8 @@ export function App(): JSX.Element {
               <strong>{blueprint.gameTitle}</strong>
               <span className="muted"> · {blueprint.gameGenre}</span>
             </div>
-            <button className="link" onClick={downloadBlueprint} disabled={!manifest}>
-              ⤓ blueprint
+            <button className="link" onClick={downloadZip} disabled={!manifest}>
+              ⤓ install zip
             </button>
           </div>
         )}
@@ -223,12 +221,20 @@ export function App(): JSX.Element {
 function StatusBadge({
   reachable,
   model,
+  blenderMode,
 }: {
   reachable: boolean | null;
   model: string;
+  blenderMode: "blender" | "procedural" | null;
 }): JSX.Element {
   const state = reachable === null ? "pending" : reachable ? "online" : "mock";
-  const label =
+  const llmLabel =
     reachable === null ? "…" : reachable ? `LLM: ${model}` : "mock mode";
-  return <span className={`status ${state}`}>{label}</span>;
+  const assetLabel = blenderMode === "blender" ? " · blender" : blenderMode === "procedural" ? " · procedural" : "";
+  return (
+    <span className={`status ${state}`}>
+      {llmLabel}
+      {assetLabel}
+    </span>
+  );
 }

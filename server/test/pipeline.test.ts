@@ -32,7 +32,7 @@ describe("runBuild", () => {
     const stages = new Set<BuildStage>(
       events.filter((e) => e.type === "stage-start").map((e) => e.stage),
     );
-    for (const stage of ["design", "world", "assets", "scripts", "package"] as const) {
+    for (const stage of ["design", "world", "assets", "scripts", "animations", "package"] as const) {
       expect(stages.has(stage), stage).toBe(true);
     }
 
@@ -40,6 +40,9 @@ describe("runBuild", () => {
     expect(blueprint.entities.length).toBeGreaterThan(0);
     expect(blueprint.scripts["gameplay.ts"]).toBeTruthy();
     expect(blueprint.player.speed).toBeGreaterThan(0);
+    expect(Object.keys(blueprint.animations).length).toBeGreaterThan(0);
+    expect(blueprint.player.animations.idle).toBeTruthy();
+    expect(blueprint.player.animations.walk).toBeTruthy();
     // Forest theme -> daylight.
     expect(blueprint.environment.lighting).toBe("day");
   });
@@ -57,6 +60,9 @@ describe("runBuild", () => {
     if (artifact?.type === "artifact") {
       expect(artifact.manifest.branch).toMatch(/^game\//);
       expect(artifact.manifest.entityCount).toBeGreaterThan(0);
+      expect(artifact.manifest.downloadUrl).toContain("/api/artifacts/");
+      expect(artifact.manifest.packageFormat).toBe("zip+html");
+      expect(artifact.manifest.animationCount).toBeGreaterThan(0);
     }
   });
 });

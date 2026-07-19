@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { EntityBehavior, GameBlueprint, LightingMood } from "@ai-gamedev/shared";
+import {
+  sampleClip,
+  type AnimationClip,
+  type EntityBehavior,
+  type GameBlueprint,
+  type LightingMood,
+} from "@ai-gamedev/shared";
 import { buildAssetMesh } from "../lib/three-helpers.js";
 
 interface ThreeScene {
@@ -15,7 +21,9 @@ interface EntityUserData {
   baseX: number;
   baseY: number;
   baseZ: number;
+  baseScaleY: number;
   phase: number;
+  animation?: AnimationClip;
 }
 
 const MOVE_KEYS: Record<string, [number, number]> = {
@@ -49,6 +57,8 @@ export function useThreeScene(): ThreeScene {
   const groundRef = useRef<THREE.Mesh | null>(null);
   const keysRef = useRef<Set<string>>(new Set());
   const speedRef = useRef<number>(6);
+  const playerAnimsRef = useRef<GameBlueprint["player"]["animations"] | null>(null);
+  const playerBaseYRef = useRef(0.5);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -133,25 +143,7 @@ export function useThreeScene(): ThreeScene {
       const t = clock.elapsedTime;
 
       for (const child of entities.children) {
-        const data = child.userData as EntityUserData;
-        switch (data.behavior) {
-          case "spin":
-            child.rotation.y += delta * 0.8;
-            break;
-          case "bob":
-            child.position.y = data.baseY + Math.sin(t * 2 + data.phase) * 0.35;
-            break;
-          case "patrol":
-            child.position.x = data.baseX + Math.sin(t + data.phase) * 2;
-            break;
-          case "static":
-            break;
-          default: {
-            // Exhaustiveness guard for EntityBehavior.
-            const _never: never = data.behavior;
-            return _never;
-          }
-        }
+        applyEntityMotion(child, t, delta);
       }
 
       // Player movement (screen-relative on the ground plane).
@@ -164,11 +156,20 @@ export function useThreeScene(): ThreeScene {
           dz += move[1];
         }
       }
-      if (dx !== 0 || dz !== 0) {
+      const moving = dx !== 0 || dz !== 0;
+      if (moving) {
         const len = Math.hypot(dx, dz);
         const step = (speedRef.current * delta) / len;
         player.position.x = THREE.MathUtils.clamp(player.position.x + dx * step, -BOUND, BOUND);
         player.position.z = THREE.MathUtils.clamp(player.position.z + dz * step, -BOUND, BOUND);
+      }
+
+      const anims = playerAnimsRef.current;
+      if (anims) {
+        const clip = moving ? anims.walk : anims.idle;
+        const sampled = sampleClip(clip, t);
+        player.position.y = playerBaseYRef.current + (sampled["position.y"] ?? 0);
+        player.scale.y = sampled["scale.y"] ?? 1;
       }
       playerLight.position.set(player.position.x, 2.2, player.position.z);
 
@@ -231,16 +232,54 @@ export function useThreeScene(): ThreeScene {
         baseX: entity.position.x,
         baseY,
         baseZ: entity.position.z,
+        baseScaleY: 1,
         phase: Math.random() * Math.PI * 2,
+        animation: entity.animation,
       } satisfies EntityUserData;
       group.add(mesh);
     }
 
     speedRef.current = blueprint.player.speed;
+    playerAnimsRef.current = blueprint.player.animations;
+    playerBaseYRef.current = blueprint.player.spawn.y;
     (player.material as THREE.MeshStandardMaterial).color.set(blueprint.player.color);
   }, []);
 
   return { containerRef: containerRef as React.RefObject<HTMLDivElement>, setBlueprint };
+}
+
+function applyEntityMotion(child: THREE.Object3D, t: number, delta: number): void {
+  const data = child.userData as EntityUserData;
+  if (data.animation) {
+    const sampled = sampleClip(data.animation, t + data.phase);
+    child.position.x = data.baseX + (sampled["position.x"] ?? 0);
+    child.position.y = data.baseY + (sampled["position.y"] ?? 0);
+    child.position.z = data.baseZ;
+    if (sampled["rotation.y"] !== undefined) child.rotation.y = sampled["rotation.y"];
+    child.scale.y = sampled["scale.y"] ?? data.baseScaleY;
+    return;
+  }
+
+  switch (data.behavior) {
+    case "spin":
+      child.rotation.y += delta * 0.8;
+      break;
+    case "bob":
+      child.position.y = data.baseY + Math.sin(t * 2 + data.phase) * 0.35;
+      break;
+    case "patrol":
+      child.position.x = data.baseX + Math.sin(t + data.phase) * 2;
+      break;
+    case "pulse":
+      child.scale.y = 1 + Math.sin(t * 3 + data.phase) * 0.12;
+      break;
+    case "static":
+      break;
+    default: {
+      const _never: never = data.behavior;
+      return _never;
+    }
+  }
 }
 
 interface SceneLights {

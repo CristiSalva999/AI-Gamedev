@@ -14,11 +14,13 @@
   "dependencies": {
     "@ai-gamedev/shared": "*",
     "cors": "^2.8.5",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/jszip": "^3.4.0",
     "@types/supertest": "^6.0.2",
     "supertest": "^7.0.0",
     "tsup": "^8.3.0",

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { access } from "node:fs/promises";
+import path from "node:path";
 import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import {
@@ -18,12 +21,15 @@ import { runBuild, runSteer, type PipelineOptions } from "./pipeline/pipeline.js
 import { generatePrompt, SYSTEM_PROMPT } from "./prompts.js";
 import type { AssetGenerator } from "./services/assetGenerator.js";
 import type { ContextStore } from "./services/contextStore.js";
+import type { GamePackager } from "./services/gamePackager.js";
 import type { LLMClient } from "./services/llmClient.js";
 
 export interface AppDependencies {
   contextStore: ContextStore;
   llm: LLMClient;
   assetGenerator: AssetGenerator;
+  packager?: GamePackager;
+  gamesDir?: string;
   /** Pipeline tuning (e.g. streaming delays); overridable in tests. */
   pipelineOptions?: PipelineOptions;
 }
@@ -33,7 +39,14 @@ export interface AppDependencies {
  * so tests can wire in fakes and run in isolation.
  */
 export function createApp(deps: AppDependencies): Express {
-  const { contextStore, llm, assetGenerator, pipelineOptions } = deps;
+  const {
+    contextStore,
+    llm,
+    assetGenerator,
+    packager,
+    gamesDir,
+    pipelineOptions,
+  } = deps;
   const app = express();
 
   app.use(cors());
@@ -42,7 +55,10 @@ export function createApp(deps: AppDependencies): Express {
   app.get(
     "/api/health",
     asyncHandler(async (_req, res) => {
-      const reachable = await llm.ping();
+      const [reachable, blenderOk] = await Promise.all([
+        llm.ping(),
+        assetGenerator.blenderAvailable(),
+      ]);
       const body: HealthResponse = {
         status: "ok",
         llm: {
@@ -50,6 +66,10 @@ export function createApp(deps: AppDependencies): Express {
           reachable,
           model: llm.model,
           baseUrl: llm.baseUrl,
+        },
+        blender: {
+          available: blenderOk,
+          mode: blenderOk ? "blender" : "procedural",
         },
       };
       res.json(body);
@@ -123,9 +143,11 @@ export function createApp(deps: AppDependencies): Express {
       }
 
       const context = await contextStore.load();
+      const outputDir = gamesDir ? path.join(gamesDir, "_scratch", "assets") : undefined;
       const { asset, blenderScript, source } = await assetGenerator.generate(
         brief,
         context,
+        { outputDir },
       );
 
       context.assets.models[asset.id] = asset;
@@ -135,6 +157,35 @@ export function createApp(deps: AppDependencies): Express {
 
       const body: GenerateAssetResponse = { asset, blenderScript, source };
       res.status(201).json(body);
+    }),
+  );
+
+  // Download a packaged game zip produced by the package stage.
+  app.get(
+    "/api/artifacts/:slug/download",
+    asyncHandler(async (req, res) => {
+      if (!gamesDir) {
+        res.status(404).json({ error: "Artifacts not configured" });
+        return;
+      }
+      const slug = String(req.params.slug).replace(/[^a-z0-9-_]/gi, "");
+      if (!slug) {
+        res.status(400).json({ error: "Invalid slug" });
+        return;
+      }
+      const zipPath = path.join(gamesDir, `${slug}.zip`);
+      try {
+        await access(zipPath);
+      } catch {
+        res.status(404).json({ error: "Artifact not found" });
+        return;
+      }
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${slug}.zip"`,
+      );
+      createReadStream(zipPath).pipe(res);
     }),
   );
 
@@ -170,18 +221,24 @@ export function createApp(deps: AppDependencies): Express {
       context.chat.push(chatMessage("user", message));
 
       const build = !context.blueprint || isBuildRequest(message);
+      const pipelineDeps = {
+        llm,
+        assetGenerator,
+        packager,
+        assetsDir: gamesDir,
+      };
       const events = build
-        ? runBuild(message, { llm, assetGenerator }, pipelineOptions)
-        : runSteer(message, context.blueprint as GameBlueprint, {
-            llm,
-            assetGenerator,
-          });
+        ? runBuild(message, pipelineDeps, pipelineOptions)
+        : runSteer(message, context.blueprint as GameBlueprint, pipelineDeps);
 
       let latest: GameBlueprint | undefined = context.blueprint;
       for await (const event of events) {
         if (aborted) break;
         if (event.type === "sneak-peek" || event.type === "done") {
           latest = event.blueprint;
+        }
+        if (event.type === "artifact") {
+          context.lastManifest = event.manifest;
         }
         if (event.type === "message") {
           context.chat.push(chatMessage("assistant", event.content));

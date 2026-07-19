@@ -6,6 +6,7 @@
 export interface ServerConfig {
   port: number;
   dataDir: string;
+  gamesDir: string;
   llm: {
     baseUrl: string;
     apiKey: string;
@@ -14,6 +15,7 @@ export interface ServerConfig {
     /** Milliseconds before an LLM request is aborted. */
     timeoutMs: number;
   };
+  blenderBin: string;
 }
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -27,9 +29,11 @@ function int(value: string | undefined, fallback: number): number {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+  const dataDir = env.DATA_DIR ?? new URL("../data", import.meta.url).pathname;
   return {
     port: int(env.PORT, 3001),
-    dataDir: env.DATA_DIR ?? new URL("../data", import.meta.url).pathname,
+    dataDir,
+    gamesDir: env.GAMES_DIR ?? `${dataDir}/games`,
     llm: {
       baseUrl: env.LLM_BASE_URL ?? "http://localhost:1234/v1",
       apiKey: env.LLM_API_KEY ?? "lm-studio",
@@ -37,5 +41,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       allowMockFallback: bool(env.LLM_ALLOW_MOCK_FALLBACK, true),
       timeoutMs: int(env.LLM_TIMEOUT_MS, 30_000),
     },
+    blenderBin: env.BLENDER_BIN ?? "blender",
   };
 }

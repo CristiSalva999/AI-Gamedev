@@ -1,22 +1,29 @@
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { MockBlenderAssetGenerator } from "./services/assetGenerator.js";
+import { HybridBlenderAssetGenerator } from "./services/assetGenerator.js";
 import { FileContextStore } from "./services/contextStore.js";
+import { GamePackager } from "./services/gamePackager.js";
+import { GitWorkspaceService } from "./services/gitWorkspace.js";
 import { LMStudioClient } from "./services/llmClient.js";
 
 /** Composition root: build concrete dependencies and start the HTTP server. */
-function main(): void {
+async function main(): Promise<void> {
   const config = loadConfig();
 
   const llm = new LMStudioClient(config.llm);
   const contextStore = new FileContextStore(config.dataDir);
-  const assetGenerator = new MockBlenderAssetGenerator(llm);
+  const assetGenerator = new HybridBlenderAssetGenerator(llm, undefined, config.blenderBin);
+  const git = new GitWorkspaceService(config.gamesDir);
+  const packager = new GamePackager({ git, gamesRoot: config.gamesDir });
+  const blenderAvailable = await assetGenerator.blenderAvailable();
 
   // A small delay makes the streamed "sneak peeks" feel deliberate in the UI.
   const app = createApp({
     contextStore,
     llm,
     assetGenerator,
+    packager,
+    gamesDir: config.gamesDir,
     pipelineOptions: { delayMs: 140 },
   });
 
@@ -28,7 +35,11 @@ function main(): void {
         config.llm.allowMockFallback ? "enabled" : "disabled"
       }`,
     );
+    console.log(
+      `[server] Blender: ${blenderAvailable ? `available (${config.blenderBin})` : "procedural GLB fallback"}`,
+    );
+    console.log(`[server] Games dir: ${config.gamesDir}`);
   });
 }
 
-main();
+void main();

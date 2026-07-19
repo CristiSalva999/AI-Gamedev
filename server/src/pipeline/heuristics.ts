@@ -1,8 +1,14 @@
-import type {
-  BlueprintEntity,
-  EnvironmentSpec,
-  LightingMood,
-  PlayerSpec,
+import {
+  createBobClip,
+  createIdleClip,
+  createPatrolClip,
+  createPulseClip,
+  createSpinClip,
+  createWalkClip,
+  type BlueprintEntity,
+  type EnvironmentSpec,
+  type LightingMood,
+  type PlayerSpec,
 } from "@ai-gamedev/shared";
 
 /**
@@ -161,7 +167,40 @@ export function ringPosition(index: number, total: number): { x: number; y: numb
 
 export function behaviorFor(interactive: boolean, index: number): BlueprintEntity["behavior"] {
   if (interactive) return "bob";
-  return index % 3 === 0 ? "spin" : "static";
+  // Mix patrol / pulse / spin so sneak peeks show living motion.
+  switch (index % 4) {
+    case 0:
+      return "spin";
+    case 1:
+      return "patrol";
+    case 2:
+      return "pulse";
+    default:
+      return "static";
+  }
+}
+
+/** Attaches a keyframe clip matching the entity's behavior. */
+export function animationFor(
+  behavior: BlueprintEntity["behavior"],
+  entityId: string,
+): BlueprintEntity["animation"] {
+  switch (behavior) {
+    case "spin":
+      return createSpinClip(`anim_${entityId}_spin`);
+    case "bob":
+      return createBobClip(`anim_${entityId}_bob`);
+    case "patrol":
+      return createPatrolClip(`anim_${entityId}_patrol`);
+    case "pulse":
+      return createPulseClip(`anim_${entityId}_pulse`);
+    case "static":
+      return undefined;
+    default: {
+      const _never: never = behavior;
+      return _never;
+    }
+  }
 }
 
 /** Picks a player color that contrasts with the environment ground. */
@@ -170,6 +209,10 @@ export function playerFor(theme: Theme): PlayerSpec {
     color: theme.palette[0] ?? "#ffffff",
     speed: 6,
     spawn: { x: 0, y: 0.5, z: 0 },
+    animations: {
+      idle: createIdleClip(),
+      walk: createWalkClip(),
+    },
   };
 }
 
@@ -189,4 +232,8 @@ export function moodLabel(mood: LightingMood): string {
       return _never;
     }
   }
+}
+
+export function slugify(text: string): string {
+  return text.trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "game";
 }

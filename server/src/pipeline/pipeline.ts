@@ -9,20 +9,27 @@ import {
 } from "@ai-gamedev/shared";
 import { generatePrompt } from "../prompts.js";
 import type { AssetGenerator } from "../services/assetGenerator.js";
+import type { GamePackager } from "../services/gamePackager.js";
 import type { LLMClient } from "../services/llmClient.js";
 import {
+  animationFor,
   behaviorFor,
   deriveTheme,
   deriveTitle,
   moodLabel,
   playerFor,
   ringPosition,
+  slugify,
   type Theme,
 } from "./heuristics.js";
 
 export interface PipelineDeps {
   llm: LLMClient;
   assetGenerator: AssetGenerator;
+  /** When omitted, the package stage records a dry-run manifest (tests). */
+  packager?: GamePackager;
+  /** Directory where per-game GLB assets are written during a build. */
+  assetsDir?: string;
 }
 
 export interface PipelineOptions {
@@ -70,6 +77,7 @@ export async function* runBuild(
 
   const theme = deriveTheme(prompt);
   const title = deriveTitle(prompt);
+  const slug = slugify(title);
   const context = nowContext(theme, title);
   const timestamp = Date.now();
 
@@ -84,6 +92,7 @@ export async function* runBuild(
     player: playerFor(theme),
     mechanics: ["move", "explore", "interact"],
     scripts: {},
+    animations: {},
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -122,17 +131,23 @@ export async function* runBuild(
 
   // --- Stage: assets (streamed one by one = sneak peeks) -------------------
   yield { type: "stage-start", stage: "assets", label: "Generating assets & textures" };
+  const assetOutputDir = deps.assetsDir
+    ? `${deps.assetsDir}/${slug}/assets`
+    : undefined;
   const briefs = world.assets.slice(0, maxAssets);
   for (let i = 0; i < briefs.length; i++) {
     const brief = briefs[i];
-    const { asset } = await deps.assetGenerator.generate(brief, context);
+    const { asset } = await deps.assetGenerator.generate(brief, context, {
+      outputDir: assetOutputDir,
+    });
     const interactive = world.interactive.has(brief.toLowerCase()) || i < 2;
+    const behavior = behaviorFor(interactive, i);
     const entity: BlueprintEntity = {
       id: asset.id,
       name: asset.name,
       spec: asset.spec,
       position: ringPosition(i, briefs.length),
-      behavior: behaviorFor(interactive, i),
+      behavior,
       interactive,
     };
     blueprint.entities.push(entity);
@@ -140,7 +155,7 @@ export async function* runBuild(
     yield {
       type: "sneak-peek",
       stage: "assets",
-      note: `Modeled "${asset.name}" → ${asset.spec.shape} (${asset.spec.color})${interactive ? " · interactive" : ""}.`,
+      note: `Modeled "${asset.name}" → ${asset.spec.shape} (${asset.spec.color})${asset.source ? " · .glb" : ""}${interactive ? " · interactive" : ""}.`,
       blueprint: clone(blueprint),
     };
     await sleep(delayMs);
@@ -163,12 +178,32 @@ export async function* runBuild(
   };
   yield { type: "stage-complete", stage: "scripts" };
 
+  // --- Stage: animations ---------------------------------------------------
+  yield { type: "stage-start", stage: "animations", label: "Authoring animations" };
+  for (const entity of blueprint.entities) {
+    const clip = animationFor(entity.behavior, entity.id);
+    if (clip) {
+      entity.animation = clip;
+      blueprint.animations[clip.id] = clip;
+    }
+  }
+  blueprint.animations[blueprint.player.animations.idle.id] = blueprint.player.animations.idle;
+  blueprint.animations[blueprint.player.animations.walk.id] = blueprint.player.animations.walk;
+  blueprint.updatedAt = Date.now();
+  yield {
+    type: "sneak-peek",
+    stage: "animations",
+    note: `Authored ${Object.keys(blueprint.animations).length} animation clips (idle/walk + prop loops).`,
+    blueprint: clone(blueprint),
+  };
+  yield { type: "stage-complete", stage: "animations" };
+
   // --- Stage: player -------------------------------------------------------
   yield { type: "stage-start", stage: "player", label: "Configuring player" };
   yield {
     type: "sneak-peek",
     stage: "player",
-    note: `Player ready (WASD, speed ${blueprint.player.speed}).`,
+    note: `Player ready (WASD, speed ${blueprint.player.speed}, idle+walk clips).`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "player" };
@@ -178,36 +213,54 @@ export async function* runBuild(
   blueprint.updatedAt = Date.now();
   yield { type: "stage-complete", stage: "assemble" };
 
-  // --- Stage: package (simulated build & branch) ---------------------------
+  // --- Stage: package (real git workspace + zip) ---------------------------
   yield { type: "stage-start", stage: "package", label: "Building & packaging" };
-  const branch = `game/${slug(title)}`;
   for (const step of [
-    `Creating branch ${branch}`,
-    "Compiling scene graph",
-    "Baking materials & textures",
-    "Bundling runtime",
-    "Packaging build artifact (.zip)",
+    `Creating git workspace game/${slug}`,
+    "Writing .glb assets & scripts",
+    "Baking playable HTML runner",
+    "Packaging downloadable .zip",
   ]) {
     yield { type: "message", role: "assistant", content: step };
     await sleep(delayMs);
   }
-  yield {
-    type: "artifact",
-    manifest: {
+
+  let manifest;
+  if (deps.packager) {
+    const result = await deps.packager.package(blueprint, { slug });
+    manifest = result.manifest;
+    yield {
+      type: "message",
+      role: "assistant",
+      content: manifest.branchCreated
+        ? `Git branch ${manifest.branch} created at ${manifest.installPath}`
+        : `Workspace ready at ${manifest.installPath} (git unavailable — files written anyway)`,
+    };
+  } else {
+    // Dry-run path used by unit tests that don't want filesystem side effects.
+    manifest = {
       name: title,
-      branch,
+      slug,
+      branch: `game/${slug}`,
+      branchCreated: false,
       entityCount: blueprint.entities.length,
       assetCount: blueprint.entities.length,
       scriptCount: Object.keys(blueprint.scripts).length,
+      animationCount: Object.keys(blueprint.animations).length,
       approxSizeKb: estimateSizeKb(blueprint),
-    },
-  };
+      downloadUrl: `/api/artifacts/${slug}/download`,
+      installPath: `(dry-run)/${slug}`,
+      packageFormat: "zip+html" as const,
+    };
+  }
+
+  yield { type: "artifact", manifest };
   yield { type: "stage-complete", stage: "package" };
 
   yield {
     type: "message",
     role: "assistant",
-    content: `"${title}" is ready to play in the preview. Steer it live — e.g. "make it night", "add more crates", or "player faster".`,
+    content: `"${title}" is ready. Download the zip and open play.html, or keep steering — e.g. "make it night", "add more crates", "player faster".`,
   };
   yield { type: "done", blueprint: clone(blueprint) };
 }
@@ -253,12 +306,16 @@ export async function* runSteer(
     for (let i = 0; i < count; i++) {
       const { asset } = await deps.assetGenerator.generate(addBrief, context);
       const index = blueprint.entities.length;
+      const behavior = behaviorFor(false, index);
+      const clip = animationFor(behavior, asset.id);
+      if (clip) blueprint.animations[clip.id] = clip;
       blueprint.entities.push({
         id: asset.id,
         name: asset.name,
         spec: asset.spec,
         position: ringPosition(index, index + 1),
-        behavior: behaviorFor(false, index),
+        behavior,
+        animation: clip,
         interactive: false,
       });
     }
@@ -428,10 +485,6 @@ function estimateSizeKb(blueprint: GameBlueprint): number {
   const perEntity = 35;
   const scripts = Object.values(blueprint.scripts).join("").length / 1024;
   return Math.round(base + blueprint.entities.length * perEntity + scripts);
-}
-
-function slug(text: string): string {
-  return text.trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "game";
 }
 
 function clone<T>(value: T): T {
