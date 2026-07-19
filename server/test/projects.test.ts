@@ -129,4 +129,50 @@ describe("projects API", () => {
     const res = await request(app).get("/api/projects/does-not-exist");
     expect(res.status).toBe(404);
   });
+
+  it("edits a project's scope", async () => {
+    const { app } = buildApp();
+    const created = await request(app).post("/api/projects").send(answers);
+    const id = created.body.id as string;
+
+    const patched = await request(app)
+      .patch(`/api/projects/${id}`)
+      .send({ title: "Renamed Quest", genre: "dungeon", goal: "escape the crypt" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.title).toBe("Renamed Quest");
+    expect(patched.body.genre).toBe("dungeon");
+    expect(patched.body.setup.goal).toBe("escape the crypt");
+
+    // Persisted context reflects the new scope.
+    const detail = await request(app).get(`/api/projects/${id}`);
+    expect(detail.body.context.gameTitle).toBe("Renamed Quest");
+    expect(detail.body.context.gameGenre).toBe("dungeon");
+  });
+
+  it("rejects an invalid genre or empty title on edit", async () => {
+    const { app } = buildApp();
+    const created = await request(app).post("/api/projects").send(answers);
+    const id = created.body.id as string;
+
+    expect((await request(app).patch(`/api/projects/${id}`).send({ genre: "mmo" })).status).toBe(400);
+    expect((await request(app).patch(`/api/projects/${id}`).send({ title: "  " })).status).toBe(400);
+  });
+
+  it("deletes a project", async () => {
+    const { app } = buildApp();
+    const created = await request(app).post("/api/projects").send(answers);
+    const id = created.body.id as string;
+
+    const del = await request(app).delete(`/api/projects/${id}`);
+    expect(del.status).toBe(204);
+
+    expect((await request(app).get(`/api/projects/${id}`)).status).toBe(404);
+    expect((await request(app).get("/api/projects")).body).toEqual([]);
+  });
+
+  it("returns 404 when deleting an unknown project", async () => {
+    const { app } = buildApp();
+    const res = await request(app).delete("/api/projects/nope");
+    expect(res.status).toBe(404);
+  });
 });
