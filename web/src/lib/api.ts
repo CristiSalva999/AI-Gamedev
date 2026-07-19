@@ -71,6 +71,21 @@ export const api = {
       body: JSON.stringify(answers),
     }),
 
+  /** Edit a project's scope (setup answers). */
+  updateProject: (id: string, patch: Partial<GameSetupAnswers>) =>
+    json<ProjectMeta>(`/api/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  /** Delete a project and its workspace. */
+  deleteProject: async (id: string): Promise<void> => {
+    const res = await fetch(`${BASE}/api/projects/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) {
+      throw new Error(`Delete failed (${res.status})`);
+    }
+  },
+
   /**
    * Sends a chat message and streams the autonomous pipeline's build events.
    * `onEvent` is called for each event as it arrives. When `projectId` is set,

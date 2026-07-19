@@ -5,6 +5,7 @@ interface ProjectRailProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onDelete: (project: ProjectMeta) => void;
 }
 
 export function ProjectRail({
@@ -12,6 +13,7 @@ export function ProjectRail({
   activeId,
   onSelect,
   onNew,
+  onDelete,
 }: ProjectRailProps): JSX.Element {
   return (
     <nav className="rail">
@@ -24,7 +26,7 @@ export function ProjectRail({
       ) : (
         <ul className="rail-list">
           {projects.map((project) => (
-            <li key={project.id}>
+            <li key={project.id} className="rail-row">
               <button
                 type="button"
                 className={`rail-item${project.id === activeId ? " active" : ""}`}
@@ -36,6 +38,15 @@ export function ProjectRail({
                   {project.genre}
                   {project.hasBuild ? "" : " · draft"}
                 </span>
+              </button>
+              <button
+                type="button"
+                className="rail-delete"
+                title={`Delete "${project.title}"`}
+                aria-label={`Delete ${project.title}`}
+                onClick={() => onDelete(project)}
+              >
+                ×
               </button>
             </li>
           ))}

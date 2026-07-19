@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  BuildEvent,
-  BuildManifest,
-  GameBlueprint,
-  GameSetupAnswers,
-  GenerationSource,
-  ProjectMeta,
+import {
+  composeSetupPrompt,
+  type BuildEvent,
+  type BuildManifest,
+  type GameBlueprint,
+  type GameSetupAnswers,
+  type GenerationSource,
+  type ProjectMeta,
 } from "@ai-gamedev/shared";
 import { api } from "./lib/api.js";
 import { useThreeScene } from "./hooks/useThreeScene.js";
 import { ProjectRail } from "./components/ProjectRail.js";
+import { ScopeEditor } from "./components/ScopeEditor.js";
 import { SetupWizard } from "./components/SetupWizard.js";
 
 type LineKind = "user" | "assistant" | "stage" | "peek" | "artifact" | "error";
@@ -36,6 +38,8 @@ export function App(): JSX.Element {
   const { containerRef, setBlueprint } = useThreeScene();
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [currentMeta, setCurrentMeta] = useState<ProjectMeta | null>(null);
+  const [editingScope, setEditingScope] = useState(false);
   const [view, setView] = useState<View>("welcome");
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState("");
@@ -179,11 +183,13 @@ export function App(): JSX.Element {
       abortRef.current?.abort();
       setView("project");
       setActiveId(id);
+      setEditingScope(false);
       setManifest(null);
       setBlueprintState(null);
       setLines([]);
       try {
-        const { context } = await api.getProject(id);
+        const { meta, context } = await api.getProject(id);
+        setCurrentMeta(meta);
         if (context.blueprint) {
           setBlueprint(context.blueprint);
           setBlueprintState(context.blueprint);
@@ -203,11 +209,53 @@ export function App(): JSX.Element {
     [pushLine, setBlueprint],
   );
 
+  const handleDelete = useCallback(
+    async (project: ProjectMeta) => {
+      if (!window.confirm(`Delete "${project.title}"? This removes its workspace and cannot be undone.`)) {
+        return;
+      }
+      try {
+        await api.deleteProject(project.id);
+      } catch (err) {
+        pushLine({ kind: "error", text: `Delete failed: ${(err as Error).message}` });
+        return;
+      }
+      if (activeId === project.id) {
+        abortRef.current?.abort();
+        setActiveId(null);
+        setCurrentMeta(null);
+        setBlueprintState(null);
+        setManifest(null);
+        setLines([]);
+        setEditingScope(false);
+        setView("welcome");
+      }
+      await refreshProjects();
+    },
+    [activeId, refreshProjects, pushLine],
+  );
+
+  const handleSaveScope = useCallback(
+    async (answers: GameSetupAnswers, rebuild: boolean) => {
+      if (!activeId) return;
+      const meta = await api.updateProject(activeId, answers);
+      setCurrentMeta(meta);
+      setEditingScope(false);
+      await refreshProjects();
+      if (rebuild) {
+        await runMessage(composeSetupPrompt(answers), activeId);
+      }
+    },
+    [activeId, refreshProjects, runMessage],
+  );
+
   const handleCreate = useCallback(
     async (answers: GameSetupAnswers) => {
       const created = await api.createProject(answers);
       await refreshProjects();
       setActiveId(created.id);
+      setCurrentMeta(created);
+      setEditingScope(false);
       setManifest(null);
       setBlueprintState(null);
       setView("project");
@@ -254,6 +302,7 @@ export function App(): JSX.Element {
         activeId={activeId}
         onSelect={(id) => void openProject(id)}
         onNew={startNew}
+        onDelete={(project) => void handleDelete(project)}
       />
 
       <aside className="panel">
@@ -262,21 +311,31 @@ export function App(): JSX.Element {
           <StatusBadge reachable={llmReachable} model={model} blenderMode={blenderMode} />
         </header>
 
-        {view === "project" && blueprint && (
+        {view === "project" && (
           <div className="game-head">
             <div className="game-head-text">
-              <strong>{blueprint.gameTitle}</strong>
-              <span className="muted"> · {blueprint.gameGenre}</span>
+              <strong>{currentMeta?.title ?? blueprint?.gameTitle ?? "Project"}</strong>
+              {currentMeta && <span className="muted"> · {currentMeta.genre}</span>}
             </div>
-            <button
-              type="button"
-              className="link"
-              onClick={downloadZip}
-              disabled={!manifest}
-              title={manifest ? "Download playable zip" : "Finish a build to unlock download"}
-            >
-              Download zip
-            </button>
+            <div className="game-head-actions">
+              <button
+                type="button"
+                className="link"
+                onClick={() => setEditingScope((v) => !v)}
+                disabled={!currentMeta || building}
+              >
+                {editingScope ? "Close" : "Edit scope"}
+              </button>
+              <button
+                type="button"
+                className="link"
+                onClick={downloadZip}
+                disabled={!manifest}
+                title={manifest ? "Download playable zip" : "Finish a build to unlock download"}
+              >
+                Download zip
+              </button>
+            </div>
           </div>
         )}
 
@@ -297,6 +356,13 @@ export function App(): JSX.Element {
               <p className="muted small">…or pick a project on the left.</p>
             )}
           </div>
+        ) : editingScope && currentMeta ? (
+          <ScopeEditor
+            initial={currentMeta.setup}
+            busy={building}
+            onSave={handleSaveScope}
+            onCancel={() => setEditingScope(false)}
+          />
         ) : (
           <>
             <div className="chat" ref={scrollRef} aria-live="polite">
