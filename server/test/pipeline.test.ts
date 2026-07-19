@@ -84,6 +84,25 @@ describe("runBuild", () => {
     expect(blueprint.mechanics).toContain("drive");
   });
 
+  it("clarifies & decomposes the request in a plan stage before building", async () => {
+    const events = await collect(
+      runBuild('Create a survival game called "Meadow Days" with seeds drifting on the wind', deps(), {
+        delayMs: 0,
+      }),
+    );
+
+    // The plan stage runs first.
+    const stageStarts = events.filter((e) => e.type === "stage-start");
+    expect(stageStarts[0]?.type === "stage-start" && stageStarts[0].stage).toBe("plan");
+
+    const blueprint = lastBlueprint(events);
+    // Incidental "drifting" must not turn a survival request into racing.
+    expect(blueprint.plan?.genre).toBe("survival");
+    expect(blueprint.design?.genre).toBe("survival");
+    expect(blueprint.plan?.subRequests.length).toBeGreaterThan(1);
+    expect(blueprint.scripts["plan.json"]).toBeTruthy();
+  });
+
   it("emits incremental asset sneak peeks and a build artifact", async () => {
     const events = await collect(runBuild("make a dungeon game", deps(), { delayMs: 0 }));
 
