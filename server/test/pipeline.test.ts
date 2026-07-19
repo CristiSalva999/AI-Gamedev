@@ -46,10 +46,30 @@ describe("runBuild", () => {
     // Forest theme -> daylight with a larger explorable ground.
     expect(blueprint.environment.lighting).toBe("day");
     expect(blueprint.environment.worldRadius).toBeGreaterThan(15);
+    expect(blueprint.environment.terrain?.kind).toBe("rolling");
+    expect(blueprint.design?.fidelity).toBe("cinematic");
+    expect(blueprint.design?.systems.controlScheme).toBe("walk");
+    expect(blueprint.worldRecipe?.zones.length).toBeGreaterThan(0);
+    expect(blueprint.visualStyle.toLowerCase()).not.toContain("low-poly");
     expect(blueprint.entities.some((e) => e.spec.prefab === "stone_arch")).toBe(true);
     expect(blueprint.entities.some((e) => e.spec.parts && e.spec.parts.length > 1)).toBe(true);
     expect(blueprint.entities.some((e) => e.interactive)).toBe(true);
     expect(blueprint.mechanics).toContain("collect");
+  });
+
+  it("builds an arcade racing vertical slice from a car prompt", async () => {
+    const events = await collect(
+      runBuild("genera un gioco di macchine arcade su un circuito", deps(), {
+        delayMs: 0,
+      }),
+    );
+    const blueprint = lastBlueprint(events);
+    expect(blueprint.design?.genre).toBe("racing");
+    expect(blueprint.player.avatar).toBe("car");
+    expect(blueprint.environment.terrain?.kind).toBe("track_bowl");
+    expect(blueprint.entities.some((e) => e.spec.prefab === "track_checkpoint")).toBe(true);
+    expect(blueprint.entities.some((e) => e.spec.prefab === "track_barrier")).toBe(true);
+    expect(blueprint.mechanics).toContain("drive");
   });
 
   it("emits incremental asset sneak peeks and a build artifact", async () => {

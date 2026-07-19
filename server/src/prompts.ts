@@ -1,9 +1,13 @@
-import type { GameContext, NPC } from "@ai-gamedev/shared";
+import type { FidelityLevel, GameContext, GenreKind, NPC } from "@ai-gamedev/shared";
 
 /**
  * Prompt-engineering layer: turns typed game state into precise, context-aware
  * prompts for the local LLM. Templates are pure functions so they can be unit
  * tested and reused by any caller.
+ *
+ * The gameDesign / worldRecipe prompts ask the model for rich structured JSON
+ * so a local LM Studio instance can author near-final game content; mocks
+ * supply the same shapes offline.
  */
 export const generatePrompt = {
   npcDialogue: (npc: NPC, context: GameContext, playerAction: string): string => `
@@ -30,7 +34,7 @@ Generate a short, in-character response (1-3 sentences) that:
 Response format: Just the dialogue text, no asterisks or stage directions.`.trim(),
 
   modelGeneration: (assetBrief: string, context: GameContext): string => `
-You are a 3D artist assistant. Generate a Blender Python script to create the following asset:
+You are a senior 3D environment artist. Generate a Blender Python script for a HIGH-DETAIL game asset (not low-poly placeholders).
 
 ASSET BRIEF: "${assetBrief}"
 
@@ -40,50 +44,99 @@ GAME CONTEXT:
 - Color Palette: ${context.colorPalette?.join(", ") ?? "Not specified"}
 
 REQUIREMENTS:
-1. Generate valid Blender Python API code (bpy)
-2. Use modeling techniques appropriate for "${context.visualStyle}"
-3. Keep polygon count reasonable for game performance
-4. Auto-unwrap UVs
-5. Create a material that matches the visual style
-6. Export as .glb (glTF binary format)
-7. Return only valid Python code, no explanations
+1. Valid Blender Python (bpy) only — no explanations
+2. Prefer subdivision, bevels, multiple materials, and weathering detail
+3. Target a polished cinematic look matching "${context.visualStyle}"
+4. Auto-unwrap UVs; create PBR materials (base color, roughness, subtle emission if magical)
+5. Export as .glb
+6. Center at origin, sensible real-world scale
 
-Ensure the object is centered at origin and scaled appropriately.`.trim(),
+Return only Python code.`.trim(),
 
   worldBuilding: (location: string, context: GameContext): string => `
-You are designing a game world location. Describe the structure and assets needed for:
+You are designing a richly detailed game world location for a near-final vertical slice.
 
 LOCATION: "${location}"
 GAME: ${context.gameTitle} (${context.gameGenre})
 VISUAL STYLE: ${context.visualStyle}
 
-Provide:
-1. Description (2-3 sentences)
-2. Key assets needed (list 5-8 models/objects)
-3. Environmental details (lighting, atmosphere)
-4. NPCs present
-5. Interactive elements
-6. Loot/resources available
+Provide JSON with:
+1. description (2-3 sentences, cinematic)
+2. keyAssets (8-14 named set pieces)
+3. environment { lighting, atmosphere }
+4. npcs
+5. interactive
+6. loot
+7. zones (optional): [{ name, purpose, landmarks }]`.trim(),
 
-Format as JSON for easy parsing.`.trim(),
+  gameDesign: (
+    prompt: string,
+    title: string,
+    genre: GenreKind,
+    fidelity: FidelityLevel,
+  ): string => `
+You are the lead designer on an AI game studio. Author a COMPLETE game design document as JSON for a ${fidelity} build.
+
+USER PROMPT: "${prompt}"
+WORKING TITLE: "${title}"
+GENRE HINT: "${genre}"
+
+Return ONLY JSON with this shape:
+{
+  "title": string,
+  "genre": "${genre}" | exploration|racing|shooter|dungeon|survival|horror|sandbox,
+  "pitch": string (2 sentences, evocative),
+  "visualStyle": string (explicitly NOT low-poly — describe cinematic/detailed materials),
+  "fidelity": "${fidelity}",
+  "palette": string[4],
+  "systems": {
+    "controlScheme": "walk"|"drive"|"fly"|"twin_stick",
+    "cameraMode": "orbit_follow"|"chase"|"top_down"|"first_person",
+    "objectives": string[],
+    "winCondition": string,
+    "raceLaps"?: number,
+    "checkpointCount"?: number,
+    "collectibleGoal"?: number
+  },
+  "artDirection": string
+}`.trim(),
+
+  worldRecipe: (title: string, genre: GenreKind, fidelity: FidelityLevel): string => `
+You are a world director. Author a WORLD RECIPE JSON for "${title}" (${genre}, fidelity=${fidelity}).
+
+Return ONLY JSON:
+{
+  "atmosphere": string,
+  "lighting": "day"|"dusk"|"night"|"cave",
+  "skyColor": "#rrggbb",
+  "groundColor": "#rrggbb",
+  "accentGroundColor": "#rrggbb",
+  "worldRadius": number (20-45),
+  "terrain": { "kind": "flat"|"rolling"|"mountainous"|"track_bowl"|"caves", "seed": number, "heightScale": number, "roughness": number, "resolution": number },
+  "postFx": { "bloom": boolean, "vignette": boolean, "fogDensity": number, "saturation": number, "contrast": number },
+  "zones": [{ "id": string, "name": string, "purpose": string, "center": {"x":number,"z":number}, "radius": number, "landmarks": string[], "ambientDensity": number, "mood": string }],
+  "globalAmbient": string[],
+  "interactive": string[]
+}
+
+Make it dense and playable — enough landmarks and ambient density for a vertical slice, not a sparse prototype.`.trim(),
 
   codeGeneration: (task: string, context: GameContext): string => `
-You are generating TypeScript code for a Three.js game.
+You are generating production TypeScript for a Three.js game vertical slice.
 
 TASK: "${task}"
 GAME CONTEXT: ${context.gameTitle} (${context.gameGenre})
+VISUAL STYLE: ${context.visualStyle}
 
 EXISTING CODE:
 ${context.generatedScripts["engine.ts"] ?? "// Engine not yet created"}
 
 REQUIREMENTS:
-1. Write clean, documented TypeScript
-2. Follow Three.js best practices
-3. Integrate with existing codebase
-4. Export as ES6 modules
-5. Include JSDoc comments
-
-Generate ONLY the code snippet needed for this task.`.trim(),
+1. Clean, documented TypeScript (ES modules)
+2. Three.js best practices; support walk OR drive controllers when relevant
+3. Include objective / checkpoint hooks where appropriate
+4. JSDoc on exported functions
+5. Generate ONLY the code`.trim(),
 } as const;
 
 export const SYSTEM_PROMPT = (context: GameContext): string =>

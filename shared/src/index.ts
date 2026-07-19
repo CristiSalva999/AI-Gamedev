@@ -5,6 +5,7 @@
  */
 
 export type {
+  MaterialHint,
   MeshPart,
   PrefabDefinition,
   PrefabKind,
@@ -16,6 +17,40 @@ export {
   scalePrefab,
 } from "./prefabs.js";
 
+export type {
+  CameraMode,
+  ControlScheme,
+  FidelityLevel,
+  GameDesignDoc,
+  GameplaySystemsSpec,
+  GenreKind,
+  PostFxSpec,
+  TerrainKind,
+  TerrainSpec,
+  WorldRecipe,
+  ZoneSpec,
+} from "./gameDesign.js";
+export {
+  defaultPostFx,
+  defaultTerrain,
+  inferGenreKind,
+} from "./gameDesign.js";
+
+export { enrichDefinition } from "./detail.js";
+export {
+  fbm,
+  hash2,
+  sampleTerrainHeight,
+  smoothNoise,
+} from "./terrain.js";
+
+import type {
+  FidelityLevel,
+  GameDesignDoc,
+  PostFxSpec,
+  TerrainSpec,
+  WorldRecipe,
+} from "./gameDesign.js";
 import type { MeshPart, PrefabKind, PrimitiveShape } from "./prefabs.js";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +100,8 @@ export interface AssetSpec {
   prefab?: PrefabKind;
   /** Multi-mesh parts; when present the viewport builds a Group. */
   parts?: MeshPart[];
+  /** Visual richness used when expanding this asset. */
+  fidelity?: FidelityLevel;
 }
 
 export interface ConversationTurn {
@@ -151,6 +188,9 @@ export interface EnvironmentSpec {
   worldRadius?: number;
   /** Soft secondary ground tint for grass / dirt variation. */
   accentGroundColor?: string;
+  /** Optional structured terrain / post-FX from the world recipe. */
+  terrain?: TerrainSpec;
+  postFx?: PostFxSpec;
 }
 
 export type EntityBehavior = "static" | "spin" | "bob" | "patrol" | "pulse";
@@ -184,6 +224,11 @@ export interface PlayerSpec {
     idle: AnimationClip;
     walk: AnimationClip;
   };
+  /** Controllable avatar kind — walk capsule or driveable car. */
+  avatar?: "capsule" | "car";
+  /** Max turn rate for drive controls (rad/s). */
+  turnSpeed?: number;
+  acceleration?: number;
 }
 
 export interface GameBlueprint {
@@ -199,6 +244,10 @@ export interface GameBlueprint {
   scripts: Record<string, string>;
   /** Shared animation library referenced by entities. */
   animations: Record<string, AnimationClip>;
+  /** Structured design doc from the LLM / mock design pass. */
+  design?: GameDesignDoc;
+  /** Structured world recipe driving terrain, zones, and post-FX. */
+  worldRecipe?: WorldRecipe;
   createdAt: number;
   updatedAt: number;
 }
@@ -268,6 +317,8 @@ export type GenerateTask =
   | "modelGeneration"
   | "worldBuilding"
   | "codeGeneration"
+  | "gameDesign"
+  | "worldRecipe"
   | "freeform";
 
 export interface GenerateRequest {
@@ -322,10 +373,10 @@ export function createDefaultContext(
     gameTitle: "Untitled Quest",
     gameGenre: "Action RPG",
     targetPlatform: "web",
-    visualStyle: "stylized low-poly",
-    colorPalette: ["#6c5ce7", "#00b894", "#fdcb6e", "#2d3436"],
+    visualStyle: "cinematic detailed stylized",
+    colorPalette: ["#2ecc71", "#8b5a2b", "#c4a574", "#3d6b45"],
     assets: { models: {}, materials: {}, characters: {} },
-    mechanics: ["exploration", "dialogue"],
+    mechanics: ["exploration", "interact", "collect"],
     playerInventory: [],
     worldState: {},
     generatedScripts: {},

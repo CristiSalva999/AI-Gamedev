@@ -25,7 +25,18 @@ export type PrefabKind =
   | "rubble"
   | "supply_crate"
   | "torch"
-  | "path_stone";
+  | "path_stone"
+  | "race_car"
+  | "track_barrier"
+  | "track_checkpoint"
+  | "street_lamp"
+  | "grandstand"
+  | "cone_marker";
+
+export interface MaterialHint {
+  family: "bark" | "stone" | "foliage" | "metal" | "wood" | "asphalt" | "emissive" | "paint";
+  segments?: number;
+}
 
 export interface MeshPart {
   shape: PrimitiveShape;
@@ -38,6 +49,8 @@ export interface MeshPart {
   metalness?: number;
   emissive?: string;
   emissiveIntensity?: number;
+  /** Optional material/segment hints for cinematic renders. */
+  materialHint?: MaterialHint;
 }
 
 export interface PrefabDefinition {
@@ -87,6 +100,16 @@ export function buildPrefab(kind: PrefabKind, scale = 1): PrefabDefinition {
  */
 export function prefabForBrief(brief: string): PrefabKind {
   const t = brief.toLowerCase();
+  if (/\b(race car|arcade car|player car|sportscar|sports car|kart)\b/.test(t)) {
+    return "race_car";
+  }
+  if (/\b(barrier|guardrail|rail)\b/.test(t)) return "track_barrier";
+  if (/\b(checkpoint|gate marker|start finish|start\/finish)\b/.test(t)) {
+    return "track_checkpoint";
+  }
+  if (/\b(street lamp|lamp post|floodlight)\b/.test(t)) return "street_lamp";
+  if (/\b(grandstand|bleacher|tribune)\b/.test(t)) return "grandstand";
+  if (/\b(traffic cone|cone marker|marker cone)\b/.test(t)) return "cone_marker";
   if (/\b(hollow|gnarled).*\btree|\btree.*hollow\b/.test(t)) return "hollow_tree";
   if (/\b(pine|fir|evergreen)\b/.test(t)) return "pine_tree";
   if (/\b(tree|oak|willow|canopy)\b/.test(t)) return "tree";
@@ -107,6 +130,7 @@ export function prefabForBrief(brief: string): PrefabKind {
   if (/\b(torch|lantern)\b/.test(t)) return "torch";
   if (/\b(path|stepping|cobble)\b/.test(t)) return "path_stone";
   if (/\b(fence|gate)\b/.test(t)) return "ruin_wall";
+  if (/\b(cone)\b/.test(t)) return "cone_marker";
   return "primitive";
 }
 
@@ -647,6 +671,235 @@ const PREFABS: Record<PrefabKind, PrefabFactory> = {
         color: MOSS,
         size: { x: 0.35, y: 0.06, z: 0.25 },
         offset: { x: 0.2, y: 0.12, z: 0.15 },
+      },
+    ],
+  }),
+
+  race_car: () => ({
+    kind: "race_car",
+    shape: "box",
+    color: "#e74c3c",
+    size: { x: 1.6, y: 0.9, z: 2.4 },
+    roughness: 0.35,
+    metalness: 0.55,
+    parts: [
+      {
+        shape: "box",
+        color: "#e74c3c",
+        size: { x: 1.35, y: 0.35, z: 2.1 },
+        offset: { x: 0, y: 0.35, z: 0 },
+        roughness: 0.3,
+        metalness: 0.55,
+      },
+      {
+        shape: "box",
+        color: "#c0392b",
+        size: { x: 1.1, y: 0.35, z: 1.0 },
+        offset: { x: 0, y: 0.65, z: -0.15 },
+        roughness: 0.28,
+        metalness: 0.5,
+      },
+      {
+        shape: "box",
+        color: "#1a1a1e",
+        size: { x: 0.95, y: 0.22, z: 0.55 },
+        offset: { x: 0, y: 0.78, z: 0.15 },
+        roughness: 0.2,
+        metalness: 0.8,
+      },
+      {
+        shape: "cylinder",
+        color: "#222226",
+        size: { x: 0.55, y: 0.28, z: 0.55 },
+        offset: { x: -0.7, y: 0.28, z: 0.7 },
+        rotation: { x: 0, y: 0, z: Math.PI / 2 },
+        roughness: 0.85,
+        metalness: 0.2,
+      },
+      {
+        shape: "cylinder",
+        color: "#222226",
+        size: { x: 0.55, y: 0.28, z: 0.55 },
+        offset: { x: 0.7, y: 0.28, z: 0.7 },
+        rotation: { x: 0, y: 0, z: Math.PI / 2 },
+        roughness: 0.85,
+        metalness: 0.2,
+      },
+      {
+        shape: "cylinder",
+        color: "#222226",
+        size: { x: 0.6, y: 0.3, z: 0.6 },
+        offset: { x: -0.7, y: 0.3, z: -0.75 },
+        rotation: { x: 0, y: 0, z: Math.PI / 2 },
+        roughness: 0.85,
+        metalness: 0.2,
+      },
+      {
+        shape: "cylinder",
+        color: "#222226",
+        size: { x: 0.6, y: 0.3, z: 0.6 },
+        offset: { x: 0.7, y: 0.3, z: -0.75 },
+        rotation: { x: 0, y: 0, z: Math.PI / 2 },
+        roughness: 0.85,
+        metalness: 0.2,
+      },
+    ],
+  }),
+
+  track_barrier: () => ({
+    kind: "track_barrier",
+    shape: "box",
+    color: "#e74c3c",
+    size: { x: 2.2, y: 0.7, z: 0.45 },
+    roughness: 0.55,
+    metalness: 0.15,
+    parts: [
+      {
+        shape: "box",
+        color: "#e74c3c",
+        size: { x: 2.0, y: 0.55, z: 0.35 },
+        offset: { x: 0, y: 0.3, z: 0 },
+        roughness: 0.5,
+      },
+      {
+        shape: "box",
+        color: "#f5f5f5",
+        size: { x: 2.0, y: 0.12, z: 0.36 },
+        offset: { x: 0, y: 0.48, z: 0 },
+      },
+    ],
+  }),
+
+  track_checkpoint: () => ({
+    kind: "track_checkpoint",
+    shape: "box",
+    color: "#00e5ff",
+    size: { x: 4.5, y: 3.2, z: 0.4 },
+    roughness: 0.4,
+    metalness: 0.35,
+    parts: [
+      {
+        shape: "box",
+        color: "#2c3e50",
+        size: { x: 0.25, y: 3.0, z: 0.25 },
+        offset: { x: -2.0, y: 1.5, z: 0 },
+        metalness: 0.5,
+      },
+      {
+        shape: "box",
+        color: "#2c3e50",
+        size: { x: 0.25, y: 3.0, z: 0.25 },
+        offset: { x: 2.0, y: 1.5, z: 0 },
+        metalness: 0.5,
+      },
+      {
+        shape: "box",
+        color: "#00e5ff",
+        size: { x: 4.2, y: 0.2, z: 0.2 },
+        offset: { x: 0, y: 3.0, z: 0 },
+        emissive: "#00e5ff",
+        emissiveIntensity: 0.7,
+      },
+      {
+        shape: "box",
+        color: "#00e5ff",
+        size: { x: 4.0, y: 1.6, z: 0.06 },
+        offset: { x: 0, y: 1.6, z: 0 },
+        emissive: "#00bcd4",
+        emissiveIntensity: 0.35,
+        roughness: 0.2,
+        metalness: 0.1,
+      },
+    ],
+  }),
+
+  street_lamp: () => ({
+    kind: "street_lamp",
+    shape: "cylinder",
+    color: "#4a4a50",
+    size: { x: 0.5, y: 4.2, z: 0.5 },
+    roughness: 0.45,
+    metalness: 0.65,
+    parts: [
+      {
+        shape: "cylinder",
+        color: "#3a3a40",
+        size: { x: 0.16, y: 3.6, z: 0.16 },
+        offset: { x: 0, y: 1.8, z: 0 },
+        metalness: 0.7,
+      },
+      {
+        shape: "box",
+        color: "#2f2f35",
+        size: { x: 0.9, y: 0.12, z: 0.35 },
+        offset: { x: 0.35, y: 3.55, z: 0 },
+        metalness: 0.6,
+      },
+      {
+        shape: "sphere",
+        color: "#ffe0a0",
+        size: { x: 0.35, y: 0.3, z: 0.35 },
+        offset: { x: 0.7, y: 3.4, z: 0 },
+        emissive: "#ffcc66",
+        emissiveIntensity: 0.85,
+      },
+    ],
+  }),
+
+  grandstand: () => ({
+    kind: "grandstand",
+    shape: "box",
+    color: "#5d6d7e",
+    size: { x: 6, y: 2.4, z: 2.5 },
+    roughness: 0.8,
+    metalness: 0.1,
+    parts: [
+      {
+        shape: "box",
+        color: "#5d6d7e",
+        size: { x: 5.5, y: 0.35, z: 2.2 },
+        offset: { x: 0, y: 0.3, z: 0 },
+      },
+      {
+        shape: "box",
+        color: "#667788",
+        size: { x: 5.5, y: 0.35, z: 1.7 },
+        offset: { x: 0, y: 0.85, z: -0.2 },
+      },
+      {
+        shape: "box",
+        color: "#708090",
+        size: { x: 5.5, y: 0.35, z: 1.2 },
+        offset: { x: 0, y: 1.4, z: -0.4 },
+      },
+      {
+        shape: "box",
+        color: "#e74c3c",
+        size: { x: 5.6, y: 0.5, z: 0.15 },
+        offset: { x: 0, y: 2.0, z: -0.9 },
+      },
+    ],
+  }),
+
+  cone_marker: () => ({
+    kind: "cone_marker",
+    shape: "cone",
+    color: "#e67e22",
+    size: { x: 0.55, y: 0.85, z: 0.55 },
+    roughness: 0.55,
+    metalness: 0.05,
+    parts: [
+      {
+        shape: "cone",
+        color: "#e67e22",
+        size: { x: 0.45, y: 0.75, z: 0.45 },
+        offset: { x: 0, y: 0.4, z: 0 },
+      },
+      {
+        shape: "box",
+        color: "#f5f5f5",
+        size: { x: 0.42, y: 0.1, z: 0.42 },
+        offset: { x: 0, y: 0.35, z: 0 },
       },
     ],
   }),

@@ -5,9 +5,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   buildPrefab,
+  enrichDefinition,
   prefabForBrief,
   type Asset,
   type AssetSpec,
+  type FidelityLevel,
   type GameContext,
   type GenerationSource,
   type PrefabKind,
@@ -34,7 +36,7 @@ export interface AssetGenerator {
   generate(
     brief: string,
     context: GameContext,
-    options?: { outputDir?: string },
+    options?: { outputDir?: string; fidelity?: FidelityLevel },
   ): Promise<AssetGenerationResult>;
   /** Whether a real Blender binary is on PATH. */
   blenderAvailable(): Promise<boolean>;
@@ -68,14 +70,15 @@ export class MockBlenderAssetGenerator implements AssetGenerator {
   async generate(
     brief: string,
     context: GameContext,
-    options: { outputDir?: string } = {},
+    options: { outputDir?: string; fidelity?: FidelityLevel } = {},
   ): Promise<AssetGenerationResult> {
     const prompt = generatePrompt.modelGeneration(brief, context);
     const { text: blenderScript, source } = await this.llm.generate(prompt, {
       task: "modelGeneration",
     });
 
-    const spec = deriveSpec(brief, context);
+    const fidelity = options.fidelity ?? "cinematic";
+    const spec = deriveSpec(brief, context, fidelity);
     const id = `model_${slug(brief)}_${Date.now().toString(36)}`;
     let assetSource: string | undefined;
 
@@ -118,7 +121,7 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
   async generate(
     brief: string,
     context: GameContext,
-    options: { outputDir?: string } = {},
+    options: { outputDir?: string; fidelity?: FidelityLevel } = {},
   ): Promise<AssetGenerationResult> {
     const blender = await this.resolveBlender();
     if (!blender || !options.outputDir) {
@@ -129,7 +132,8 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
     const { text: blenderScript } = await this.llm.generate(prompt, {
       task: "modelGeneration",
     });
-    const spec = deriveSpec(brief, context);
+    const fidelity = options.fidelity ?? "cinematic";
+    const spec = deriveSpec(brief, context, fidelity);
     const id = `model_${slug(brief)}_${Date.now().toString(36)}`;
     const glbPath = path.join(options.outputDir, `${id}.glb`);
     const scriptPath = path.join(options.outputDir, `${id}.py`);
@@ -175,14 +179,18 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
 }
 
 /** Deterministic brief -> geometry mapping (pure, easily testable). */
-export function deriveSpec(brief: string, context: GameContext): AssetSpec {
+export function deriveSpec(
+  brief: string,
+  context: GameContext,
+  fidelity: FidelityLevel = "cinematic",
+): AssetSpec {
   const lower = brief.toLowerCase();
   const scale = sizeMultiplier(lower);
   const prefab = prefabForBrief(brief);
   const colorOverride = matchKeyword(lower, COLOR_KEYWORDS);
 
   if (prefab !== "primitive") {
-    return specFromPrefab(prefab, scale, colorOverride);
+    return specFromPrefab(prefab, scale, colorOverride, fidelity);
   }
 
   const shape = matchKeyword(lower, SHAPE_KEYWORDS) ?? "box";
@@ -197,6 +205,7 @@ export function deriveSpec(brief: string, context: GameContext): AssetSpec {
     roughness: 0.7,
     metalness: color === "#ffd700" || color === "#9aa0a6" ? 0.6 : 0.1,
     prefab: "primitive",
+    fidelity,
     parts: [
       {
         shape,
@@ -205,6 +214,10 @@ export function deriveSpec(brief: string, context: GameContext): AssetSpec {
         offset: { x: 0, y: scale / 2, z: 0 },
         roughness: 0.7,
         metalness: color === "#ffd700" || color === "#9aa0a6" ? 0.6 : 0.1,
+        materialHint: {
+          family: color === "#ffd700" ? "metal" : "stone",
+          segments: fidelity === "cinematic" ? 28 : 16,
+        },
       },
     ],
   };
@@ -213,28 +226,30 @@ export function deriveSpec(brief: string, context: GameContext): AssetSpec {
 function specFromPrefab(
   kind: PrefabKind,
   scale: number,
-  colorOverride?: string,
+  colorOverride: string | undefined,
+  fidelity: FidelityLevel,
 ): AssetSpec {
-  const def = buildPrefab(kind, scale);
+  const enriched = enrichDefinition(buildPrefab(kind, scale), fidelity);
   const metalness =
     colorOverride === "#ffd700" || colorOverride === "#9aa0a6"
       ? 0.6
-      : def.metalness;
+      : enriched.metalness;
   const parts = colorOverride
-    ? def.parts.map((part, index) =>
+    ? enriched.parts.map((part, index) =>
         // Tint the dominant body part; keep moss/emissive accents untouched.
         index === 0 || !part.emissive
           ? { ...part, color: colorOverride, metalness }
           : part,
       )
-    : def.parts;
+    : enriched.parts;
   return {
-    shape: def.shape,
-    color: colorOverride ?? def.color,
-    size: def.size,
-    roughness: def.roughness,
+    shape: enriched.shape,
+    color: colorOverride ?? enriched.color,
+    size: enriched.size,
+    roughness: enriched.roughness,
     metalness,
-    prefab: def.kind,
+    prefab: enriched.kind,
+    fidelity,
     parts,
   };
 }

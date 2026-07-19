@@ -23,8 +23,8 @@ let lineSeq = 0;
 
 const BUILD_SUGGESTIONS = [
   "Create a forest exploration game with ruins",
+  "Genera un gioco di macchine arcade su un circuito al tramonto",
   "Build a neon sci-fi shooter on a space station",
-  "Make a spooky dungeon crawler",
 ];
 
 const STEER_SUGGESTIONS = ["make it night", "add more crates", "player faster", "make it day"];
@@ -286,7 +286,9 @@ export function App(): JSX.Element {
         <div className="viewport" ref={containerRef} />
         <div className="hud">
           {blueprint
-            ? "Click preview · WASD to explore · E to collect · drag to orbit"
+            ? blueprint.player.avatar === "car"
+              ? "Click preview · WASD to drive · checkpoints auto-count · drag to orbit"
+              : "Click preview · WASD to explore · E to collect · drag to orbit"
             : "Your game preview will appear here as the build streams"}
         </div>
       </main>

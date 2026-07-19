@@ -16,6 +16,10 @@ export function mockCompletion(prompt: string, task?: GenerateTask): string {
       return mockBlenderScript(prompt);
     case "worldBuilding":
       return mockWorld(prompt);
+    case "gameDesign":
+      return mockGameDesign(prompt);
+    case "worldRecipe":
+      return mockWorldRecipe(prompt);
     case "codeGeneration":
       return mockCode(prompt);
     case "freeform":
@@ -32,6 +36,10 @@ function inferTask(prompt: string): GenerateTask {
   const p = prompt.toLowerCase();
   if (p.includes("dialogue")) return "npcDialogue";
   if (p.includes("blender python")) return "modelGeneration";
+  if (p.includes("game design document") || p.includes("complete game design")) {
+    return "gameDesign";
+  }
+  if (p.includes("world recipe")) return "worldRecipe";
   if (p.includes("world location") || p.includes("format as json"))
     return "worldBuilding";
   if (p.includes("typescript") || p.includes("three.js")) return "codeGeneration";
@@ -106,6 +114,142 @@ function mockWorld(prompt: string): string {
       npcs: ["wandering herbalist"],
       interactive: ["ancient well", "wooden supply crate"],
       loot: ["moonpetal", "rusted key", "healing tonic"],
+    },
+    null,
+    2,
+  );
+}
+
+function mockGameDesign(prompt: string): string {
+  const racing = /race|racing|arcade|car|macchin/i.test(prompt);
+  const title = extractQuoted(prompt, racing ? "Neon Circuit" : "Forest Exploration Ruins");
+  if (racing) {
+    return JSON.stringify(
+      {
+        title,
+        genre: "racing",
+        pitch:
+          "Slap neon checkpoints onto a dusk-lit bowl circuit and chase ghost laps in a glossy arcade machine.",
+        visualStyle: "cinematic arcade racing with reflective paint and asphalt micro-detail",
+        fidelity: "cinematic",
+        palette: ["#e74c3c", "#00e5ff", "#2c3e50", "#f1c40f"],
+        systems: {
+          controlScheme: "drive",
+          cameraMode: "chase",
+          objectives: ["Hit every checkpoint", "Complete 3 laps"],
+          winCondition: "Finish 3 laps",
+          raceLaps: 3,
+          checkpointCount: 6,
+        },
+        artDirection: "Glossy chassis, dusk bloom, red/white barriers, dense trackside props",
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(
+    {
+      title,
+      genre: "exploration",
+      pitch:
+        "Wander a mist-soft forest where ruined stone still remembers old rites — gather relics before night closes the canopy.",
+      visualStyle: "cinematic detailed nature with weathered stone and layered foliage",
+      fidelity: "cinematic",
+      palette: ["#2d6a3e", "#8b5a2b", "#c4a574", "#87c4d9"],
+      systems: {
+        controlScheme: "walk",
+        cameraMode: "orbit_follow",
+        objectives: ["Reach the archway", "Collect 3 relics"],
+        winCondition: "Collect 3 relics",
+        collectibleGoal: 3,
+      },
+      artDirection: "Weathered limestone, bioluminescent moss, dense canopy, soft god-rays",
+    },
+    null,
+    2,
+  );
+}
+
+function mockWorldRecipe(prompt: string): string {
+  const racing = /racing|race|arcade|car|track/i.test(prompt);
+  if (racing) {
+    return JSON.stringify(
+      {
+        atmosphere: "warm dusk over asphalt",
+        lighting: "dusk",
+        skyColor: "#f08a4b",
+        groundColor: "#2a2a2e",
+        accentGroundColor: "#3a3a40",
+        worldRadius: 40,
+        terrain: {
+          kind: "track_bowl",
+          seed: 99,
+          heightScale: 0.6,
+          roughness: 0.35,
+          resolution: 96,
+        },
+        postFx: {
+          bloom: true,
+          vignette: true,
+          fogDensity: 0.02,
+          saturation: 1.1,
+          contrast: 1.08,
+        },
+        zones: [
+          {
+            id: "start",
+            name: "Start/Finish",
+            purpose: "spawn",
+            center: { x: 0, z: 14 },
+            radius: 6,
+            landmarks: ["track checkpoint", "grandstand"],
+            ambientDensity: 0.8,
+            mood: "hype",
+          },
+        ],
+        globalAmbient: ["track barrier", "cone marker", "street lamp"],
+        interactive: ["track checkpoint"],
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(
+    {
+      atmosphere: "dappled canopy light over quiet ruins",
+      lighting: "day",
+      skyColor: "#7eb6d9",
+      groundColor: "#2a4a30",
+      accentGroundColor: "#3d6b45",
+      worldRadius: 28,
+      terrain: {
+        kind: "rolling",
+        seed: 42,
+        heightScale: 1.8,
+        roughness: 0.55,
+        resolution: 96,
+      },
+      postFx: {
+        bloom: true,
+        vignette: true,
+        fogDensity: 0.022,
+        saturation: 1.12,
+        contrast: 1.08,
+      },
+      zones: [
+        {
+          id: "ruins",
+          name: "Fallen Sanctum",
+          purpose: "primary landmark",
+          center: { x: 0, z: -11 },
+          radius: 8,
+          landmarks: ["broken stone archway", "ancient well", "toppled statue"],
+          ambientDensity: 0.9,
+          mood: "mysterious",
+        },
+      ],
+      globalAmbient: ["pine tree", "ancient tree", "bush", "mossy boulder"],
+      interactive: ["ancient well", "wooden supply crate", "glowing moss patches"],
     },
     null,
     2,

@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
+  buildPrefab,
   sampleClip,
+  sampleTerrainHeight,
   type AnimationClip,
   type EntityBehavior,
   type GameBlueprint,
   type LightingMood,
+  type TerrainSpec,
 } from "@ai-gamedev/shared";
 import { buildAssetMesh, disposeObject3D } from "../lib/three-helpers.js";
+import { buildTerrainMesh } from "../lib/terrainMesh.js";
 
 interface ThreeScene {
   containerRef: React.RefObject<HTMLDivElement>;
@@ -54,13 +58,15 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * Owns the imperative Three.js runtime and renders a {@link GameBlueprint} as a
- * playable scene: themed lighting, compound prefab props, WASD movement, and
- * proximity collectibles (press E).
+ * cinematic playable scene: terrain, detailed prefabs, walk/drive controls,
+ * and proximity collectibles (press E).
  */
 export function useThreeScene(): ThreeScene {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
   const entitiesRef = useRef<THREE.Group | null>(null);
   const decorRef = useRef<THREE.Group | null>(null);
   const playerRef = useRef<THREE.Group | null>(null);
@@ -82,6 +88,12 @@ export function useThreeScene(): ThreeScene {
   const hintElRef = useRef<HTMLDivElement | null>(null);
   const lootElRef = useRef<HTMLDivElement | null>(null);
   const nearEntityRef = useRef<THREE.Object3D | null>(null);
+  const avatarModeRef = useRef<"capsule" | "car">("capsule");
+  const velocityRef = useRef(0);
+  const turnSpeedRef = useRef(2.4);
+  const accelRef = useRef(22);
+  const terrainRef = useRef<TerrainSpec | null>(null);
+  const checkpointsHitRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const container = containerRef.current;
@@ -91,7 +103,7 @@ export function useThreeScene(): ThreeScene {
     container.setAttribute("role", "application");
     container.setAttribute(
       "aria-label",
-      "Game preview. Click to focus, then use WASD or arrow keys to move. Press E to interact.",
+      "Game preview. Click to focus, then use WASD to move or drive. Press E to interact.",
     );
 
     const hint = document.createElement("div");
@@ -114,21 +126,25 @@ export function useThreeScene(): ThreeScene {
       50,
       Math.max(container.clientWidth, 1) / Math.max(container.clientHeight, 1),
       0.1,
-      200,
+      280,
     );
     camera.position.set(10, 12, 16);
+    cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     container.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.target.set(0, 1.2, -2);
     controls.maxPolarAngle = Math.PI * 0.48;
+    controlsRef.current = controls;
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.7);
     ambientRef.current = ambient;
@@ -140,13 +156,13 @@ export function useThreeScene(): ThreeScene {
     const sun = new THREE.DirectionalLight(0xfff2d6, 1.15);
     sun.position.set(10, 18, 8);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 60;
-    sun.shadow.camera.left = -30;
-    sun.shadow.camera.right = 30;
-    sun.shadow.camera.top = 30;
-    sun.shadow.camera.bottom = -30;
+    sun.shadow.camera.far = 90;
+    sun.shadow.camera.left = -45;
+    sun.shadow.camera.right = 45;
+    sun.shadow.camera.top = 45;
+    sun.shadow.camera.bottom = -45;
     sunRef.current = sun;
     scene.add(sun);
 
@@ -300,43 +316,86 @@ export function useThreeScene(): ThreeScene {
           dz += move[1];
         }
       }
-      const moving = dx !== 0 || dz !== 0;
       const bound = boundRef.current;
-      if (moving && playerRef.current) {
-        const len = Math.hypot(dx, dz);
-        const step = (speedRef.current * delta) / len;
-        const nextX = THREE.MathUtils.clamp(playerRef.current.position.x + dx * step, -bound, bound);
-        const nextZ = THREE.MathUtils.clamp(playerRef.current.position.z + dz * step, -bound, bound);
-        if (!collides(nextX, nextZ, entities.children, 0.55)) {
-          playerRef.current.position.x = nextX;
-          playerRef.current.position.z = nextZ;
-          playerRef.current.rotation.y = Math.atan2(dx, dz);
+      let moving = false;
+      if (playerRef.current) {
+        if (avatarModeRef.current === "car") {
+          moving = stepDrive(
+            playerRef.current,
+            dx,
+            dz,
+            delta,
+            bound,
+            entities.children,
+            velocityRef,
+            turnSpeedRef,
+            accelRef,
+            speedRef,
+          );
+        } else {
+          moving = dx !== 0 || dz !== 0;
+          if (moving) {
+            const len = Math.hypot(dx, dz);
+            const step = (speedRef.current * delta) / len;
+            const nextX = THREE.MathUtils.clamp(playerRef.current.position.x + dx * step, -bound, bound);
+            const nextZ = THREE.MathUtils.clamp(playerRef.current.position.z + dz * step, -bound, bound);
+            if (!collides(nextX, nextZ, entities.children, 0.55)) {
+              playerRef.current.position.x = nextX;
+              playerRef.current.position.z = nextZ;
+              playerRef.current.rotation.y = Math.atan2(dx, dz);
+            }
+          }
+        }
+
+        const groundY = terrainHeightAt(
+          playerRef.current.position.x,
+          playerRef.current.position.z,
+          terrainRef.current,
+          bound,
+        );
+        const anims = playerAnimsRef.current;
+        if (anims && avatarModeRef.current === "capsule") {
+          const clip = moving ? anims.walk : anims.idle;
+          const sampled = sampleClip(clip, t);
+          playerRef.current.position.y = groundY + playerBaseYRef.current + (sampled["position.y"] ?? 0);
+          playerRef.current.scale.y = sampled["scale.y"] ?? 1;
+        } else {
+          playerRef.current.position.y = groundY + (avatarModeRef.current === "car" ? 0.05 : playerBaseYRef.current);
+        }
+
+        if (playerLightRef.current) {
+          playerLightRef.current.position.set(
+            playerRef.current.position.x,
+            groundY + 2.4,
+            playerRef.current.position.z,
+          );
+        }
+
+        // Soft camera follow — tighter chase for racing.
+        const follow = avatarModeRef.current === "car" ? 0.08 : 0.03;
+        const target = controls.target;
+        target.x += (playerRef.current.position.x - target.x) * follow;
+        target.y += (groundY + 1.2 - target.y) * follow;
+        target.z += (playerRef.current.position.z - (avatarModeRef.current === "car" ? 0 : 1.5) - target.z) * follow;
+        if (avatarModeRef.current === "car" && cameraRef.current) {
+          const yaw = playerRef.current.rotation.y;
+          const desired = new THREE.Vector3(
+            playerRef.current.position.x + Math.sin(yaw) * 8,
+            groundY + 4.5,
+            playerRef.current.position.z + Math.cos(yaw) * 8,
+          );
+          cameraRef.current.position.lerp(desired, 0.06);
         }
       }
 
-      const anims = playerAnimsRef.current;
-      if (anims && playerRef.current) {
-        const clip = moving ? anims.walk : anims.idle;
-        const sampled = sampleClip(clip, t);
-        playerRef.current.position.y = playerBaseYRef.current + (sampled["position.y"] ?? 0);
-        playerRef.current.scale.y = sampled["scale.y"] ?? 1;
-      }
-      if (playerRef.current && playerLightRef.current) {
-        playerLightRef.current.position.set(
-          playerRef.current.position.x,
-          2.4,
-          playerRef.current.position.z,
-        );
-      }
-
       updateProximityHint(playerRef.current, entities.children);
-
-      // Soft camera follow toward the player without fighting orbit drag hard.
-      if (playerRef.current) {
-        const target = controls.target;
-        target.x += (playerRef.current.position.x - target.x) * 0.03;
-        target.z += (playerRef.current.position.z - 1.5 - target.z) * 0.03;
-      }
+      updateCheckpointProgress(
+        playerRef.current,
+        entities.children,
+        avatarModeRef.current,
+        checkpointsHitRef,
+        lootElRef.current,
+      );
 
       controls.update();
       renderer.render(scene, camera);
@@ -404,8 +463,8 @@ export function useThreeScene(): ThreeScene {
 
     for (const entity of blueprint.entities) {
       const root = buildAssetMesh(entity.spec);
-      // Prefab parts already sit on the ground; keep y at terrain level.
-      root.position.set(entity.position.x, 0, entity.position.z);
+      const baseY = entity.position.y ?? 0;
+      root.position.set(entity.position.x, baseY, entity.position.z);
       if (entity.rotationY) root.rotation.y = entity.rotationY;
       const footprint =
         (root.userData.footprint as number | undefined) ??
@@ -413,32 +472,52 @@ export function useThreeScene(): ThreeScene {
       root.userData = {
         behavior: entity.behavior,
         baseX: entity.position.x,
-        baseY: 0,
+        baseY,
         baseZ: entity.position.z,
         baseScaleY: 1,
         phase: hashPhase(entity.id),
         animation: entity.animation,
         interactive: entity.interactive,
-        collected: collectedRef.current.has(entity.id),
+        collected:
+          collectedRef.current.has(entity.id) ||
+          checkpointsHitRef.current.has(entity.id),
         entityId: entity.id,
         name: entity.name,
         hint: entity.interactHint,
         footprint,
       } satisfies EntityUserData;
-      if (root.userData.collected) root.visible = false;
+      if (root.userData.collected && entity.role === "loot") root.visible = false;
       group.add(root);
     }
 
     speedRef.current = blueprint.player.speed;
     playerAnimsRef.current = blueprint.player.animations;
     playerBaseYRef.current = blueprint.player.spawn.y;
-    tintPlayer(player, blueprint.player.color);
+    turnSpeedRef.current = blueprint.player.turnSpeed ?? 2.4;
+    accelRef.current = blueprint.player.acceleration ?? 22;
+    terrainRef.current = blueprint.environment.terrain ?? null;
+
+    const nextAvatar = blueprint.player.avatar ?? "capsule";
+    if (avatarModeRef.current !== nextAvatar) {
+      rebuildPlayerAvatar(player, nextAvatar, blueprint.player.color);
+      avatarModeRef.current = nextAvatar;
+    } else {
+      tintPlayer(player, blueprint.player.color);
+    }
+
+    // Rebuild cinematic terrain mesh when recipe changes.
+    rebuildGroundFromBlueprint(scene, blueprint, groundRef, accentGroundRef);
 
     const gameKey = `${blueprint.gameTitle}:${blueprint.createdAt}`;
     if (activeGameKeyRef.current !== gameKey) {
       activeGameKeyRef.current = gameKey;
       collectedRef.current.clear();
-      if (lootElRef.current) lootElRef.current.textContent = "Loot: 0";
+      checkpointsHitRef.current.clear();
+      velocityRef.current = 0;
+      if (lootElRef.current) {
+        lootElRef.current.textContent =
+          nextAvatar === "car" ? "Checkpoints: 0" : "Loot: 0";
+      }
       player.position.set(
         blueprint.player.spawn.x,
         blueprint.player.spawn.y,
@@ -471,10 +550,174 @@ function buildPlayerAvatar(color: number): THREE.Group {
   return group;
 }
 
+function rebuildPlayerAvatar(
+  player: THREE.Group,
+  mode: "capsule" | "car",
+  color: string,
+): void {
+  for (const child of [...player.children]) {
+    player.remove(child);
+    disposeObject3D(child);
+  }
+  if (mode === "car") {
+    const car = buildAssetMesh(buildPrefab("race_car").parts ? {
+      shape: "box",
+      color,
+      size: buildPrefab("race_car").size,
+      roughness: 0.35,
+      metalness: 0.55,
+      prefab: "race_car",
+      fidelity: "cinematic",
+      parts: buildPrefab("race_car").parts.map((p, i) =>
+        i === 0 ? { ...p, color } : p,
+      ),
+    } : {
+      shape: "box",
+      color,
+      size: { x: 1.4, y: 0.8, z: 2.2 },
+      roughness: 0.4,
+      metalness: 0.5,
+    });
+    player.add(car);
+    return;
+  }
+  const capsule = buildPlayerAvatar(new THREE.Color(color).getHex());
+  for (const child of [...capsule.children]) {
+    player.add(child);
+  }
+}
+
 function tintPlayer(player: THREE.Group, color: string): void {
-  const body = player.children[0] as THREE.Mesh | undefined;
-  if (body?.material) {
-    (body.material as THREE.MeshStandardMaterial).color.set(color);
+  player.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    if (mat?.color && !mat.emissiveIntensity) {
+      // Tint primary body panels only.
+      if (mesh.position.y > 0.2 && mesh.position.y < 0.9) {
+        mat.color.set(color);
+      }
+    }
+  });
+}
+
+function terrainHeightAt(
+  x: number,
+  z: number,
+  terrain: TerrainSpec | null,
+  worldRadius: number,
+): number {
+  if (!terrain) return 0;
+  return sampleTerrainHeight(x, z, terrain, worldRadius);
+}
+
+function stepDrive(
+  player: THREE.Group,
+  dx: number,
+  dz: number,
+  delta: number,
+  bound: number,
+  obstacles: THREE.Object3D[],
+  velocity: MutableRefObject<number>,
+  turnSpeed: MutableRefObject<number>,
+  accel: MutableRefObject<number>,
+  speed: MutableRefObject<number>,
+): boolean {
+  // W/S throttle, A/D steer (dz forward negative in our move map).
+  const throttle = -dz;
+  const steer = -dx;
+  if (throttle !== 0) {
+    velocity.current += throttle * accel.current * delta;
+  } else {
+    velocity.current *= 1 - Math.min(1, delta * 1.8);
+  }
+  velocity.current = THREE.MathUtils.clamp(
+    velocity.current,
+    -speed.current * 0.35,
+    speed.current,
+  );
+  if (Math.abs(velocity.current) > 0.2) {
+    player.rotation.y +=
+      steer * turnSpeed.current * delta * Math.sign(velocity.current || 1);
+  }
+  const yaw = player.rotation.y;
+  const nextX = THREE.MathUtils.clamp(
+    player.position.x + Math.sin(yaw) * -velocity.current * delta,
+    -bound,
+    bound,
+  );
+  const nextZ = THREE.MathUtils.clamp(
+    player.position.z + Math.cos(yaw) * -velocity.current * delta,
+    -bound,
+    bound,
+  );
+  if (!collides(nextX, nextZ, obstacles, 0.9)) {
+    player.position.x = nextX;
+    player.position.z = nextZ;
+  } else {
+    velocity.current *= 0.3;
+  }
+  return Math.abs(velocity.current) > 0.15;
+}
+
+function updateCheckpointProgress(
+  player: THREE.Group | null,
+  children: THREE.Object3D[],
+  avatarMode: "capsule" | "car",
+  checkpointsHit: MutableRefObject<Set<string>>,
+  lootEl: HTMLDivElement | null,
+): void {
+  if (!player || avatarMode !== "car" || !lootEl) return;
+  for (const child of children) {
+    const data = child.userData as EntityUserData;
+    if (!data.interactive || checkpointsHit.current.has(data.entityId)) continue;
+    if (!/checkpoint/i.test(data.name) && !data.hint?.toLowerCase().includes("checkpoint")) {
+      continue;
+    }
+    const dist = Math.hypot(child.position.x - player.position.x, child.position.z - player.position.z);
+    if (dist < 3.2) {
+      checkpointsHit.current.add(data.entityId);
+      lootEl.textContent = `Checkpoints: ${checkpointsHit.current.size}`;
+    }
+  }
+}
+
+function rebuildGroundFromBlueprint(
+  scene: THREE.Scene,
+  blueprint: GameBlueprint,
+  ground: MutableRefObject<THREE.Mesh | null>,
+  accent: MutableRefObject<THREE.Mesh | null>,
+): void {
+  const bound = blueprint.environment.worldRadius ?? DEFAULT_BOUND;
+  const terrain = blueprint.environment.terrain;
+  if (ground.current) {
+    scene.remove(ground.current);
+    disposeObject3D(ground.current);
+    ground.current = null;
+  }
+  if (accent.current) {
+    scene.remove(accent.current);
+    disposeObject3D(accent.current);
+    accent.current = null;
+  }
+  if (terrain) {
+    const mesh = buildTerrainMesh(
+      terrain,
+      bound,
+      blueprint.environment.groundColor,
+      blueprint.environment.accentGroundColor ?? blueprint.environment.groundColor,
+    );
+    ground.current = mesh;
+    scene.add(mesh);
+  } else {
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(bound, 64),
+      new THREE.MeshStandardMaterial({ color: blueprint.environment.groundColor, roughness: 1 }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.receiveShadow = true;
+    ground.current = mesh;
+    scene.add(mesh);
   }
 }
 
@@ -560,16 +803,19 @@ function applyEnvironment(
     ? new THREE.Fog(env.skyColor, Math.max(12, lights.bound * 0.7), lights.bound * 2.2)
     : new THREE.Fog(env.skyColor, lights.bound * 1.6, lights.bound * 2.8);
 
-  if (lights.ground) {
+  // Terrain geometry is rebuilt in setBlueprint; here we only sync fog/lights/sky.
+  if (lights.ground?.material) {
     (lights.ground.material as THREE.MeshStandardMaterial).color.set(env.groundColor);
-    lights.ground.geometry.dispose();
-    lights.ground.geometry = new THREE.CircleGeometry(lights.bound, 64);
   }
-  if (lights.accent) {
+  if (lights.accent?.material) {
     const accentColor = env.accentGroundColor ?? env.groundColor;
     (lights.accent.material as THREE.MeshStandardMaterial).color.set(accentColor);
-    lights.accent.geometry.dispose();
-    lights.accent.geometry = new THREE.CircleGeometry(lights.bound * 0.42, 48);
+  }
+
+  if (env.postFx) {
+    const fogNear = Math.max(10, lights.bound * (0.55 - env.postFx.fogDensity * 4));
+    const fogFar = lights.bound * (2.4 - env.postFx.fogDensity * 8);
+    scene.fog = new THREE.Fog(env.skyColor, fogNear, Math.max(fogNear + 8, fogFar));
   }
 
   const grid = new THREE.GridHelper(

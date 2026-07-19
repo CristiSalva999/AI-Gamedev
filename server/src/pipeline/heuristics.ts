@@ -5,12 +5,16 @@ import {
   createPulseClip,
   createSpinClip,
   createWalkClip,
+  sampleTerrainHeight,
   type BlueprintEntity,
   type EntityRole,
   type EnvironmentSpec,
   type LightingMood,
   type PlayerSpec,
+  type TerrainSpec,
+  type WorldRecipe,
 } from "@ai-gamedev/shared";
+import { pickGenrePack } from "./genrePacks.js";
 
 /**
  * Deterministic, dependency-free heuristics that translate a natural-language
@@ -31,7 +35,7 @@ export interface Theme {
   layout: LayoutStyle;
 }
 
-export type LayoutStyle = "ring" | "forest_ruins" | "dungeon" | "scatter";
+export type LayoutStyle = "ring" | "forest_ruins" | "dungeon" | "scatter" | "race_track";
 
 export interface PlannedPlacement {
   brief: string;
@@ -42,166 +46,8 @@ export interface PlannedPlacement {
   interactHint?: string;
 }
 
-interface ThemeRule {
-  keywords: string[];
-  theme: Theme;
-}
-
-const THEMES: ThemeRule[] = [
-  {
-    keywords: ["space", "sci-fi", "scifi", "galaxy", "star", "alien", "cyber", "neon", "robot"],
-    theme: {
-      genre: "Sci-fi shooter",
-      visualStyle: "sleek low-poly neon",
-      palette: ["#00e5ff", "#7c4dff", "#ff4081", "#1de9b6"],
-      environment: {
-        lighting: "night",
-        atmosphere: "cold, humming with distant machinery",
-        fog: true,
-        groundColor: "#10131f",
-        skyColor: "#05060d",
-        worldRadius: 16,
-        accentGroundColor: "#161b2e",
-      },
-      defaultAssets: ["cargo crate", "energy orb", "antenna pillar", "landing pad", "warning cone"],
-      ambientAssets: ["cargo crate", "warning cone", "antenna pillar"],
-      layout: "scatter",
-    },
-  },
-  {
-    keywords: ["forest", "jungle", "nature", "woodland", "grove", "druid", "elf", "ruins", "ruin"],
-    theme: {
-      genre: "Exploration adventure",
-      visualStyle: "stylized low-poly nature",
-      palette: ["#2ecc71", "#27ae60", "#8b5a2b", "#c4a574"],
-      environment: {
-        lighting: "day",
-        atmosphere: "dappled sunlight through ancient canopy, birdsong over quiet ruins",
-        fog: true,
-        groundColor: "#2a4a30",
-        skyColor: "#87c4d9",
-        worldRadius: 22,
-        accentGroundColor: "#3d6b45",
-      },
-      defaultAssets: [
-        "broken stone archway",
-        "glowing moss patches",
-        "ancient well",
-        "toppled statue",
-        "wooden supply crate",
-        "gnarled hollow tree",
-      ],
-      ambientAssets: [
-        "pine tree",
-        "ancient tree",
-        "bush",
-        "mossy boulder",
-        "glowing mushroom",
-        "stone pillar",
-        "ruin wall",
-        "rubble",
-        "path stone",
-      ],
-      layout: "forest_ruins",
-    },
-  },
-  {
-    keywords: ["dungeon", "cave", "crypt", "cavern", "mine", "underground", "tomb"],
-    theme: {
-      genre: "Dungeon crawler",
-      visualStyle: "gritty low-poly stone",
-      palette: ["#9aa0a6", "#6c5ce7", "#e67e22", "#c0392b"],
-      environment: {
-        lighting: "cave",
-        atmosphere: "damp, torch-lit, echoing",
-        fog: true,
-        groundColor: "#15151a",
-        skyColor: "#0a0a0e",
-        worldRadius: 14,
-        accentGroundColor: "#1c1c24",
-      },
-      defaultAssets: ["stone pillar", "treasure chest", "rock boulder", "torch", "iron gate"],
-      ambientAssets: ["torch", "rubble", "stone pillar", "wooden crate"],
-      layout: "dungeon",
-    },
-  },
-  {
-    keywords: ["desert", "sand", "dune", "oasis", "pyramid", "egypt"],
-    theme: {
-      genre: "Survival adventure",
-      visualStyle: "warm low-poly desert",
-      palette: ["#f4d35e", "#ee964b", "#f95738", "#0d3b66"],
-      environment: {
-        lighting: "dusk",
-        atmosphere: "dry heat, shifting sands",
-        fog: false,
-        groundColor: "#c2a86b",
-        skyColor: "#f5a05a",
-        worldRadius: 18,
-        accentGroundColor: "#d4bc7e",
-      },
-      defaultAssets: ["stone pillar", "clay pot", "cactus", "ancient chest", "sand rock"],
-      ambientAssets: ["sand rock", "stone pillar", "clay pot"],
-      layout: "scatter",
-    },
-  },
-  {
-    keywords: ["horror", "haunted", "zombie", "ghost", "spooky", "nightmare", "dark"],
-    theme: {
-      genre: "Survival horror",
-      visualStyle: "moody low-poly",
-      palette: ["#6c5ce7", "#2d3436", "#b71540", "#00b894"],
-      environment: {
-        lighting: "night",
-        atmosphere: "oppressive silence, cold mist",
-        fog: true,
-        groundColor: "#0e0f14",
-        skyColor: "#05050a",
-        worldRadius: 16,
-        accentGroundColor: "#151820",
-      },
-      defaultAssets: ["gravestone", "dead tree", "wooden crate", "lantern", "iron fence"],
-      ambientAssets: ["dead tree", "gravestone", "wooden crate"],
-      layout: "scatter",
-    },
-  },
-];
-
-const FALLBACK_THEME: Theme = {
-  genre: "Action RPG",
-  visualStyle: "stylized low-poly",
-  palette: ["#6c5ce7", "#00b894", "#fdcb6e", "#d63031"],
-  environment: {
-    lighting: "day",
-    atmosphere: "bright and inviting",
-    fog: false,
-    groundColor: "#1b1e2b",
-    skyColor: "#12131a",
-    worldRadius: 14,
-    accentGroundColor: "#24283b",
-  },
-  defaultAssets: ["wooden crate", "stone pillar", "glowing orb", "treasure chest", "warning cone"],
-  ambientAssets: ["wooden crate", "stone pillar", "bush"],
-  layout: "ring",
-};
-
 export function deriveTheme(prompt: string): Theme {
-  const lower = prompt.toLowerCase();
-  // Forest + ruins is the flagship demo — prefer the nature theme when either keyword hits.
-  for (const rule of THEMES) {
-    if (rule.keywords.some((kw) => lower.includes(kw))) {
-      const theme = structuredClone(rule.theme);
-      if (lower.includes("ruin") && theme.layout !== "forest_ruins") {
-        theme.layout = "forest_ruins";
-        theme.defaultAssets = [
-          "broken stone archway",
-          ...theme.defaultAssets.filter((a) => !a.includes("arch")),
-        ].slice(0, 6);
-      }
-      return theme;
-    }
-  }
-  return structuredClone(FALLBACK_THEME);
+  return structuredClone(pickGenrePack(prompt).theme);
 }
 
 const STOP_WORDS = new Set([
@@ -241,7 +87,11 @@ export function planLevelPlacements(
   theme: Theme,
   landmarkBriefs: string[],
   interactiveNames: Set<string>,
-  options: { maxLandmarks?: number; maxAmbient?: number } = {},
+  options: {
+    maxLandmarks?: number;
+    maxAmbient?: number;
+    recipe?: WorldRecipe;
+  } = {},
 ): PlannedPlacement[] {
   const maxLandmarks = options.maxLandmarks ?? 8;
   const maxAmbient = options.maxAmbient ?? 18;
@@ -252,6 +102,9 @@ export function planLevelPlacements(
     case "forest_ruins":
       placements.push(...forestRuinsLayout(landmarks, interactiveNames));
       placements.push(...forestAmbient(theme.ambientAssets, maxAmbient, placements));
+      break;
+    case "race_track":
+      placements.push(...raceTrackLayout(theme, interactiveNames, maxAmbient));
       break;
     case "dungeon":
       placements.push(...dungeonLayout(landmarks, interactiveNames));
@@ -275,7 +128,93 @@ export function planLevelPlacements(
     }
   }
 
+  // Snap Y to terrain when a heightfield recipe is available.
+  const terrain = options.recipe?.terrain ?? theme.environment.terrain;
+  const radius = options.recipe?.worldRadius ?? theme.environment.worldRadius ?? 14;
+  if (terrain) {
+    for (const p of placements) {
+      p.position.y = Number(
+        sampleTerrainHeight(p.position.x, p.position.z, terrain, radius).toFixed(3),
+      );
+    }
+  }
+
   return placements;
+}
+
+/** Oval arcade circuit with barriers, checkpoints, lamps, and grandstands. */
+export function raceTrackLayout(
+  _theme: Theme,
+  interactiveNames: Set<string>,
+  maxAmbient: number,
+): PlannedPlacement[] {
+  const out: PlannedPlacement[] = [];
+  const rx = 18;
+  const rz = 12;
+  const checkpoints = 6;
+
+  for (let i = 0; i < checkpoints; i++) {
+    const t = (i / checkpoints) * Math.PI * 2;
+    const x = Math.cos(t) * rx;
+    const z = Math.sin(t) * rz;
+    const tangent = Math.atan2(Math.cos(t) * rz, -Math.sin(t) * rx);
+    out.push({
+      brief: "track checkpoint",
+      position: { x: Number(x.toFixed(2)), y: 0, z: Number(z.toFixed(2)) },
+      rotationY: tangent,
+      role: "landmark",
+      interactive: true,
+      interactHint: `Checkpoint ${i + 1}`,
+    });
+  }
+
+  // Inner + outer barrier rings.
+  for (let ring = 0; ring < 2; ring++) {
+    const scale = ring === 0 ? 0.78 : 1.18;
+    const count = ring === 0 ? 16 : 22;
+    for (let i = 0; i < count && out.length < maxAmbient + checkpoints + 8; i++) {
+      const t = (i / count) * Math.PI * 2 + ring * 0.08;
+      const x = Math.cos(t) * rx * scale;
+      const z = Math.sin(t) * rz * scale;
+      const tangent = Math.atan2(Math.cos(t) * rz, -Math.sin(t) * rx);
+      out.push({
+        brief: "track barrier",
+        position: { x: Number(x.toFixed(2)), y: 0, z: Number(z.toFixed(2)) },
+        rotationY: tangent + Math.PI / 2,
+        role: "ambient",
+        interactive: false,
+      });
+    }
+  }
+
+  // Trackside dressing.
+  const props: Array<{ brief: string; t: number; scale: number }> = [
+    { brief: "grandstand", t: 0.05, scale: 1.35 },
+    { brief: "grandstand", t: 0.55, scale: 1.35 },
+    { brief: "street lamp", t: 0.2, scale: 1.25 },
+    { brief: "street lamp", t: 0.45, scale: 1.25 },
+    { brief: "street lamp", t: 0.7, scale: 1.25 },
+    { brief: "street lamp", t: 0.9, scale: 1.25 },
+    { brief: "cone marker", t: 0.3, scale: 0.95 },
+    { brief: "cone marker", t: 0.33, scale: 0.95 },
+    { brief: "cone marker", t: 0.8, scale: 0.95 },
+  ];
+  for (const prop of props) {
+    const t = prop.t * Math.PI * 2;
+    out.push({
+      brief: prop.brief,
+      position: {
+        x: Number((Math.cos(t) * rx * prop.scale).toFixed(2)),
+        y: 0,
+        z: Number((Math.sin(t) * rz * prop.scale).toFixed(2)),
+      },
+      rotationY: t + Math.PI,
+      role: prop.brief.includes("cone") ? "path" : "ambient",
+      interactive: interactiveNames.has(prop.brief),
+    });
+  }
+
+  return out;
 }
 
 function forestRuinsLayout(
@@ -380,7 +319,7 @@ function forestAmbient(
       role: "ambient",
       interactive: false,
     });
-    occupied.push(spot);
+    occupied.push({ x: spot.x, y: 0, z: spot.z });
   }
 
   const fillers = [
@@ -546,15 +485,31 @@ export function animationFor(
 /** Picks a player color that contrasts with the environment ground. */
 export function playerFor(theme: Theme): PlayerSpec {
   const radius = theme.environment.worldRadius ?? 14;
+  const racing = theme.layout === "race_track";
   return {
     color: theme.palette[0] ?? "#ffffff",
-    speed: 7,
-    spawn: { x: 0, y: 0.6, z: Math.min(4, radius * 0.25) },
+    speed: racing ? 18 : 7,
+    spawn: racing
+      ? { x: 0, y: 0.4, z: 14 }
+      : { x: 0, y: 0.6, z: Math.min(4, radius * 0.25) },
     animations: {
       idle: createIdleClip(),
       walk: createWalkClip(),
     },
+    avatar: racing ? "car" : "capsule",
+    turnSpeed: racing ? 2.6 : undefined,
+    acceleration: racing ? 28 : undefined,
   };
+}
+
+export function applyTerrainHeight(
+  x: number,
+  z: number,
+  terrain: TerrainSpec | undefined,
+  worldRadius: number,
+): number {
+  if (!terrain) return 0;
+  return sampleTerrainHeight(x, z, terrain, worldRadius);
 }
 
 export function moodLabel(mood: LightingMood): string {

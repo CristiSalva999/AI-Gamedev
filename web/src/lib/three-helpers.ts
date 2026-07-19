@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { AssetSpec, MeshPart, PrimitiveShape } from "@ai-gamedev/shared";
+import { createPartMaterial } from "./materials.js";
 
 /**
  * Renderer-agnostic description of the geometry to build. Extracted as a pure
@@ -17,21 +18,21 @@ export function geometryParams(spec: AssetSpec): GeometryParams {
   });
 }
 
-export function geometryParamsForPart(part: Pick<MeshPart, "shape" | "size">): GeometryParams {
+export function geometryParamsForPart(part: Pick<MeshPart, "shape" | "size" | "materialHint">): GeometryParams {
   const { x, y, z } = part.size;
+  const segments = part.materialHint?.segments ?? 20;
   switch (part.shape) {
     case "box":
       return { type: "box", args: [x, y, z] };
     case "sphere":
-      return { type: "sphere", args: [0.5 * Math.max(x, y, z), 20, 14] };
+      return { type: "sphere", args: [0.5 * Math.max(x, y, z), segments, Math.max(12, Math.floor(segments * 0.65))] };
     case "cylinder":
-      return { type: "cylinder", args: [0.5 * x, 0.5 * z || 0.5 * x, y, 16] };
+      return { type: "cylinder", args: [0.5 * x, 0.5 * z || 0.5 * x, y, segments] };
     case "cone":
-      return { type: "cone", args: [0.5 * Math.max(x, z), y, 16] };
+      return { type: "cone", args: [0.5 * Math.max(x, z), y, segments] };
     case "torus":
-      return { type: "torus", args: [0.5 * x, 0.2 * x, 12, 24] };
+      return { type: "torus", args: [0.5 * x, 0.18 * x, Math.max(10, Math.floor(segments / 2)), segments] };
     default: {
-      // Exhaustiveness guard: new shapes must be handled here.
       const _never: never = part.shape;
       return _never;
     }
@@ -60,13 +61,7 @@ function createGeometry(params: GeometryParams): THREE.BufferGeometry {
 
 function buildPartMesh(part: MeshPart): THREE.Mesh {
   const geometry = createGeometry(geometryParamsForPart(part));
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(part.color),
-    roughness: part.roughness ?? 0.8,
-    metalness: part.metalness ?? 0.05,
-    emissive: part.emissive ? new THREE.Color(part.emissive) : new THREE.Color(0x000000),
-    emissiveIntensity: part.emissiveIntensity ?? 0,
-  });
+  const material = createPartMaterial(part);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(part.offset.x, part.offset.y, part.offset.z);
   if (part.rotation) {
@@ -91,8 +86,11 @@ export function buildAssetMesh(spec: AssetSpec): THREE.Object3D {
       offset: { x: 0, y: 0, z: 0 },
       roughness: spec.roughness,
       metalness: spec.metalness,
+      materialHint: {
+        family: "stone",
+        segments: spec.fidelity === "cinematic" ? 28 : 16,
+      },
     });
-    // Legacy single-mesh path was centered; lift so the base sits on the ground.
     mesh.position.y = Math.max(spec.size.y, 0.5) / 2;
     return mesh;
   }
