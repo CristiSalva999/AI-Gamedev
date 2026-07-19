@@ -12,9 +12,7 @@ function generator() {
 describe("MockBlenderAssetGenerator", () => {
   it("maps brief keywords to primitive shapes", async () => {
     const cases: Array<[string, string]> = [
-      ["ancient stone pillar", "cylinder"],
       ["glowing orb", "sphere"],
-      ["wooden crate", "box"],
       ["warning cone", "cone"],
       ["magic ring", "torus"],
     ];
@@ -24,6 +22,15 @@ describe("MockBlenderAssetGenerator", () => {
     }
   });
 
+  it("maps set pieces to compound prefabs", async () => {
+    const { asset } = await generator().generate("ancient stone pillar", context);
+    expect(asset.spec.prefab).toBe("stone_pillar");
+    expect(asset.spec.parts?.length).toBeGreaterThan(1);
+
+    const crate = await generator().generate("wooden crate", context);
+    expect(crate.asset.spec.prefab).toBe("supply_crate");
+  });
+
   it("derives material color from keywords", async () => {
     const { asset } = await generator().generate("golden chest", context);
     expect(asset.spec.color).toBe("#ffd700");
@@ -31,8 +38,9 @@ describe("MockBlenderAssetGenerator", () => {
   });
 
   it("scales up for size adjectives", async () => {
+    const base = await generator().generate("boulder", context);
     const { asset } = await generator().generate("giant boulder", context);
-    expect(asset.spec.size.x).toBe(2);
+    expect(asset.spec.size.x).toBeCloseTo(base.asset.spec.size.x * 2);
   });
 
   it("is deterministic for the same brief", async () => {

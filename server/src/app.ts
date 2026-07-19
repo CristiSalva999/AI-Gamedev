@@ -268,8 +268,11 @@ export function createApp(deps: AppDependencies): Express {
 /** Heuristic: does this message ask to start a brand-new game build? */
 function isBuildRequest(message: string): boolean {
   const m = message.toLowerCase();
-  const wantsNew = /\b(create|make|build|generate|start|new|prototype|design)\b/.test(m);
-  const mentionsGame = /\bgame|level|world|rpg|shooter|platformer\b/.test(m);
+  const wantsNew = /\b(create|make|build|generate|start|new|prototype|design|genera)\b/.test(m);
+  const mentionsGame =
+    /\bgame|level|world|rpg|shooter|platformer|racing|arcade|gioco|macchin|circuit|dungeon|forest\b/.test(
+      m,
+    );
   return wantsNew && mentionsGame;
 }
 
@@ -291,6 +294,19 @@ function buildPrompt(payload: GenerateRequest, context: GameContext): string | n
       return generatePrompt.worldBuilding(String(params.location ?? ""), context);
     case "codeGeneration":
       return generatePrompt.codeGeneration(String(params.task ?? ""), context);
+    case "gameDesign":
+      return generatePrompt.gameDesign(
+        String(params.prompt ?? ""),
+        String(params.title ?? context.gameTitle),
+        (params.genre as "exploration") ?? "exploration",
+        (params.fidelity as "cinematic") ?? "cinematic",
+      );
+    case "worldRecipe":
+      return generatePrompt.worldRecipe(
+        String(params.title ?? context.gameTitle),
+        (params.genre as "exploration") ?? "exploration",
+        (params.fidelity as "cinematic") ?? "cinematic",
+      );
     case "freeform":
       return typeof params.text === "string" ? params.text : null;
     default: {

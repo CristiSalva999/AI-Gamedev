@@ -24,7 +24,7 @@ describe("geometryParams", () => {
   it("produces radius/segment args for a sphere", () => {
     const params = geometryParams(spec({ shape: "sphere" }));
     expect(params.type).toBe("sphere");
-    expect(params.args[0]).toBeCloseTo(0.6);
+    expect(params.args[0]).toBeCloseTo(0.5);
     expect(params.args).toHaveLength(3);
   });
 

@@ -37,14 +37,51 @@ describe("runBuild", () => {
     }
 
     const blueprint = lastBlueprint(events);
-    expect(blueprint.entities.length).toBeGreaterThan(0);
+    expect(blueprint.entities.length).toBeGreaterThan(12);
     expect(blueprint.scripts["gameplay.ts"]).toBeTruthy();
     expect(blueprint.player.speed).toBeGreaterThan(0);
     expect(Object.keys(blueprint.animations).length).toBeGreaterThan(0);
     expect(blueprint.player.animations.idle).toBeTruthy();
     expect(blueprint.player.animations.walk).toBeTruthy();
-    // Forest theme -> daylight.
+    // Forest theme -> daylight with a larger explorable ground.
     expect(blueprint.environment.lighting).toBe("day");
+    expect(blueprint.environment.worldRadius).toBeGreaterThan(15);
+    expect(blueprint.environment.terrain?.kind).toBe("rolling");
+    expect(blueprint.design?.fidelity).toBe("cinematic");
+    expect(blueprint.design?.systems.controlScheme).toBe("walk");
+    expect(blueprint.controls?.scheme).toBe("walk");
+    expect(blueprint.controls?.bindings.some((b) => b.action === "interact")).toBe(true);
+    expect(blueprint.runtime?.objectives.length).toBeGreaterThan(0);
+    expect(blueprint.runtime?.features.interact).toBe(true);
+    expect(blueprint.scripts["runtime.json"]).toBeTruthy();
+    expect(blueprint.scripts["gameplay.ts"]).toContain("createInitialState");
+    expect(blueprint.worldRecipe?.zones.length).toBeGreaterThan(0);
+    expect(blueprint.visualStyle.toLowerCase()).not.toContain("low-poly");
+    expect(blueprint.entities.some((e) => e.spec.prefab === "stone_arch")).toBe(true);
+    expect(blueprint.entities.some((e) => e.spec.parts && e.spec.parts.length > 1)).toBe(true);
+    expect(blueprint.entities.some((e) => e.interactive)).toBe(true);
+    expect(blueprint.mechanics).toContain("collect");
+  });
+
+  it("builds an arcade racing vertical slice from a car prompt", async () => {
+    const events = await collect(
+      runBuild("genera un gioco di macchine arcade su un circuito", deps(), {
+        delayMs: 0,
+      }),
+    );
+    const blueprint = lastBlueprint(events);
+    expect(blueprint.design?.genre).toBe("racing");
+    expect(blueprint.player.avatar).toBe("car");
+    expect(blueprint.controls?.scheme).toBe("drive");
+    expect(blueprint.controls?.bindings.some((b) => b.action === "handbrake")).toBe(true);
+    expect(blueprint.controls?.bindings.some((b) => b.action === "accelerate")).toBe(true);
+    expect(blueprint.runtime?.racing?.laps).toBeGreaterThanOrEqual(3);
+    expect(blueprint.runtime?.features.handbrake).toBe(true);
+    expect(blueprint.scripts["gameplay.ts"]).toContain("onCheckpoint");
+    expect(blueprint.environment.terrain?.kind).toBe("track_bowl");
+    expect(blueprint.entities.some((e) => e.spec.prefab === "track_checkpoint")).toBe(true);
+    expect(blueprint.entities.some((e) => e.spec.prefab === "track_barrier")).toBe(true);
+    expect(blueprint.mechanics).toContain("drive");
   });
 
   it("emits incremental asset sneak peeks and a build artifact", async () => {

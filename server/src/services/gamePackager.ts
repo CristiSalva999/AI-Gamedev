@@ -142,27 +142,57 @@ export function buildPlayableHtml(blueprint: GameBlueprint): string {
   canvas{display:block;width:100vw;height:100vh}
   #hud{position:fixed;left:16px;bottom:16px;padding:8px 12px;background:rgba(0,0,0,.55);border-radius:8px;font-size:13px}
   #title{position:fixed;left:16px;top:16px;font-weight:700}
+  #loot{position:fixed;right:16px;top:16px;padding:6px 10px;background:rgba(0,0,0,.55);border-radius:8px;font-size:13px}
 </style>
 </head>
 <body>
 <div id="title">${escapeHtml(blueprint.gameTitle)}</div>
+<div id="loot">Loot: 0</div>
 <canvas id="c"></canvas>
-<div id="hud">WASD / arrows to move · Esc to reset</div>
+<div id="hud">${escapeHtml(blueprint.controls?.hudLine ?? "WASD move · E interact")} · Esc to reset</div>
 <script>
 const BP = ${payload};
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
+const lootEl = document.getElementById("loot");
 let W=0,H=0,dpr=1;
+const RADIUS = BP.environment.worldRadius || 14;
+const collected = new Set();
 function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
 addEventListener("resize",resize);resize();
 const keys=new Set();
-addEventListener("keydown",e=>{keys.add(e.code);if(e.code==="Escape"){player.x=BP.player.spawn.x;player.z=BP.player.spawn.z}});
+addEventListener("keydown",e=>{
+  keys.add(e.code);
+  if(e.code==="Escape"){player.x=BP.player.spawn.x;player.z=BP.player.spawn.z}
+  if(e.code==="KeyE")tryCollect();
+});
 addEventListener("keyup",e=>keys.delete(e.code));
 const player={x:BP.player.spawn.x,z:BP.player.spawn.z,bob:0};
-const SCALE=28;
+const SCALE=Math.max(14, Math.min(28, 420/RADIUS));
 function worldToScreen(x,z){return {x:W/2+x*SCALE,y:H/2+z*SCALE}}
-function hex(c){return c}
+function tryCollect(){
+  for(const e of BP.entities){
+    if(!e.interactive || collected.has(e.id)) continue;
+    if(Math.hypot(e.position.x-player.x,e.position.z-player.z)<2.2){
+      collected.add(e.id);
+      lootEl.textContent="Loot: "+collected.size;
+      break;
+    }
+  }
+}
 let last=performance.now();
+function drawPart(px,py,part,sy){
+  const r=Math.max(4, Math.max(part.size.x,part.size.z)*SCALE*0.4)*sy;
+  const ox=(part.offset?.x||0)*SCALE;
+  const oy=-(part.offset?.y||0)*SCALE*0.55;
+  ctx.fillStyle=part.color;
+  ctx.beginPath();
+  if(part.shape==="sphere"||part.shape==="torus")ctx.arc(px+ox,py+oy,r,0,Math.PI*2);
+  else if(part.shape==="cone"){ctx.moveTo(px+ox,py+oy-r);ctx.lineTo(px+ox-r,py+oy+r*0.5);ctx.lineTo(px+ox+r,py+oy+r*0.5);ctx.closePath()}
+  else if(part.shape==="cylinder"){ctx.fillRect(px+ox-r*0.55,py+oy-r,r*1.1,r*2);return}
+  else ctx.fillRect(px+ox-r,py+oy-r,r*2,r*2);
+  ctx.fill();
+}
 function frame(now){
   const dt=Math.min(0.05,(now-last)/1000);last=now;
   let dx=0,dz=0;
@@ -172,39 +202,42 @@ function frame(now){
   if(keys.has("KeyD")||keys.has("ArrowRight"))dx+=1;
   const moving=dx||dz;
   if(moving){const len=Math.hypot(dx,dz);player.x+=dx/len*BP.player.speed*dt;player.z+=dz/len*BP.player.speed*dt}
+  player.x=Math.max(-RADIUS,Math.min(RADIUS,player.x));
+  player.z=Math.max(-RADIUS,Math.min(RADIUS,player.z));
   player.bob=moving?Math.sin(now/120)*4:Math.sin(now/600)*2;
   ctx.fillStyle=BP.environment.skyColor;ctx.fillRect(0,0,W,H);
-  // ground
   ctx.fillStyle=BP.environment.groundColor;
-  const g=worldToScreen(0,0);ctx.beginPath();ctx.ellipse(g.x,g.y,11*SCALE,11*SCALE,0,0,Math.PI*2);ctx.fill();
+  const g=worldToScreen(0,0);ctx.beginPath();ctx.ellipse(g.x,g.y,RADIUS*SCALE,RADIUS*SCALE,0,0,Math.PI*2);ctx.fill();
+  if(BP.environment.accentGroundColor){
+    ctx.fillStyle=BP.environment.accentGroundColor;
+    ctx.beginPath();ctx.ellipse(g.x,g.y-SCALE,RADIUS*0.42*SCALE,RADIUS*0.42*SCALE,0,0,Math.PI*2);ctx.fill();
+  }
   const t=now/1000;
   for(const e of BP.entities){
-    let x=e.position.x,y=e.position.y,z=e.position.z,sy=1;
+    if(collected.has(e.id)) continue;
+    let x=e.position.x,y=e.position.y||0,z=e.position.z,sy=1;
     const anim=e.animation;
     if(anim){
-      const u=(t%anim.duration)/anim.duration;
       for(const track of anim.tracks){
-        const v=sample(track,u*anim.duration);
+        const v=sample(track,t%anim.duration);
         if(track.target==="position.x")x+=v;
         if(track.target==="position.y")y+=v;
         if(track.target==="scale.y")sy=v;
       }
-    } else if(e.behavior==="bob"){y+=Math.sin(t*2)*0.35}
+    } else if(e.behavior==="bob"){y+=Math.sin(t*2)*0.25}
       else if(e.behavior==="patrol"){x+=Math.sin(t)*2}
-      else if(e.behavior==="pulse"){sy=1+Math.sin(t*3)*0.12}
+      else if(e.behavior==="pulse"){sy=1+Math.sin(t*3)*0.1}
     const p=worldToScreen(x,z);
-    const r=Math.max(8,e.spec.size.x*SCALE*0.45)*sy;
-    ctx.fillStyle=hex(e.spec.color);
-    ctx.beginPath();
-    if(e.spec.shape==="sphere"||e.spec.shape==="torus")ctx.arc(p.x,p.y-y*SCALE*0.4,r,0,Math.PI*2);
-    else if(e.spec.shape==="cone"){ctx.moveTo(p.x,p.y-r*1.4);ctx.lineTo(p.x-r,p.y+r*0.4);ctx.lineTo(p.x+r,p.y+r*0.4);ctx.closePath()}
-    else if(e.spec.shape==="cylinder"){ctx.fillRect(p.x-r*0.6,p.y-r,r*1.2,r*2);continue}
-    else ctx.fillRect(p.x-r,p.y-r,r*2,r*2);
-    ctx.fill();
+    const parts=e.spec.parts;
+    if(parts&&parts.length){
+      for(const part of parts) drawPart(p.x,p.y-y*SCALE*0.35,part,sy);
+    } else {
+      drawPart(p.x,p.y,{shape:e.spec.shape,color:e.spec.color,size:e.spec.size,offset:{x:0,y:e.spec.size.y/2,z:0}},sy);
+    }
   }
   const pp=worldToScreen(player.x,player.z);
   ctx.fillStyle=BP.player.color;
-  ctx.fillRect(pp.x-10,pp.y-14+player.bob,20,28);
+  ctx.beginPath();ctx.ellipse(pp.x,pp.y+player.bob*0.15,11,16,0,0,Math.PI*2);ctx.fill();
   requestAnimationFrame(frame);
 }
 function sample(track,time){

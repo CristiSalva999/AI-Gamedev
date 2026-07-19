@@ -1,27 +1,35 @@
 import {
+  controlProfileFor,
   createDefaultContext,
   type BlueprintEntity,
   type BuildEvent,
   type BuildStage,
+  type FidelityLevel,
   type GameBlueprint,
   type GameContext,
+  type GameDesignDoc,
   type LightingMood,
+  type WorldRecipe,
 } from "@ai-gamedev/shared";
 import { generatePrompt } from "../prompts.js";
 import type { AssetGenerator } from "../services/assetGenerator.js";
 import type { GamePackager } from "../services/gamePackager.js";
 import type { LLMClient } from "../services/llmClient.js";
+import { pickGenrePack } from "./genrePacks.js";
 import {
   animationFor,
   behaviorFor,
   deriveTheme,
   deriveTitle,
   moodLabel,
+  planLevelPlacements,
   playerFor,
   ringPosition,
   slugify,
   type Theme,
 } from "./heuristics.js";
+import { buildScaffold } from "./scaffold.js";
+import { authorGameplayScript } from "./scriptAuthor.js";
 
 export interface PipelineDeps {
   llm: LLMClient;
@@ -35,11 +43,17 @@ export interface PipelineDeps {
 export interface PipelineOptions {
   /** Artificial delay between package steps for a nicer stream (0 in tests). */
   delayMs?: number;
-  /** Cap on generated entities to keep scenes readable. */
+  /** Cap on landmark entities streamed during the assets stage. */
   maxAssets?: number;
+  /** Cap on ambient filler props (trees, bushes, rubble…). */
+  maxAmbient?: number;
+  /** Visual richness target — cinematic by default for real builds. */
+  fidelity?: FidelityLevel;
 }
 
-const MAX_ASSETS_DEFAULT = 6;
+const MAX_LANDMARKS_DEFAULT = 10;
+const MAX_AMBIENT_DEFAULT = 36;
+const DEFAULT_FIDELITY: FidelityLevel = "cinematic";
 
 const sleep = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
@@ -73,8 +87,11 @@ export async function* runBuild(
   options: PipelineOptions = {},
 ): AsyncGenerator<BuildEvent> {
   const delayMs = options.delayMs ?? 0;
-  const maxAssets = options.maxAssets ?? MAX_ASSETS_DEFAULT;
+  const maxLandmarks = options.maxAssets ?? MAX_LANDMARKS_DEFAULT;
+  const maxAmbient = options.maxAmbient ?? MAX_AMBIENT_DEFAULT;
+  const fidelity = options.fidelity ?? DEFAULT_FIDELITY;
 
+  const pack = pickGenrePack(prompt);
   const theme = deriveTheme(prompt);
   const title = deriveTitle(prompt);
   const slug = slugify(title);
@@ -90,7 +107,7 @@ export async function* runBuild(
     environment: { ...theme.environment },
     entities: [],
     player: playerFor(theme),
-    mechanics: ["move", "explore", "interact"],
+    mechanics: [...pack.mechanics],
     scripts: {},
     animations: {},
     createdAt: timestamp,
@@ -100,80 +117,147 @@ export async function* runBuild(
   yield {
     type: "message",
     role: "assistant",
-    content: `On it — building "${title}", a ${theme.genre.toLowerCase()} in a ${moodLabel(theme.environment.lighting)} setting. I'll stream sneak peeks as I go.`,
+    content: `On it — building "${title}" as a ${fidelity} ${pack.kind} experience (${theme.genre.toLowerCase()}, ${moodLabel(theme.environment.lighting)}). The local model will author design + world recipes; I'll stream sneak peeks.`,
   };
 
   // --- Stage: design -------------------------------------------------------
-  yield { type: "stage-start", stage: "design", label: "Designing concept" };
-  const pitch = await buildPitch(prompt, blueprint, deps.llm);
-  blueprint.pitch = pitch;
+  yield { type: "stage-start", stage: "design", label: "Authoring game design doc" };
+  const design = await authorDesignDoc(prompt, title, pack, fidelity, deps.llm);
+  blueprint.design = design;
+  blueprint.pitch = design.pitch;
+  blueprint.visualStyle = design.visualStyle;
+  blueprint.colorPalette = design.palette;
+  blueprint.gameGenre = theme.genre;
+  blueprint.controls = controlProfileFor(design.systems.controlScheme);
+  if (design.systems.controlHints?.length) {
+    blueprint.controls = {
+      ...blueprint.controls,
+      hudLine: design.systems.controlHints.join(" · "),
+    };
+  }
+  context.visualStyle = design.visualStyle;
+  context.colorPalette = design.palette;
   blueprint.updatedAt = Date.now();
   yield {
     type: "sneak-peek",
     stage: "design",
-    note: `Concept: ${pitch}`,
+    note: `Design: ${design.genre}/${design.systems.controlScheme} · controls: ${blueprint.controls.hudLine} · fidelity ${design.fidelity}. ${design.pitch}`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "design" };
 
   // --- Stage: world --------------------------------------------------------
-  yield { type: "stage-start", stage: "world", label: "Designing the level" };
-  const world = await planWorld(title, context, deps.llm, theme);
-  blueprint.environment.atmosphere = world.atmosphere ?? blueprint.environment.atmosphere;
+  yield { type: "stage-start", stage: "world", label: "Authoring world recipe" };
+  const recipe = await authorWorldRecipe(title, pack, fidelity, deps.llm);
+  blueprint.worldRecipe = recipe;
+  blueprint.environment = {
+    lighting: recipe.lighting,
+    atmosphere: recipe.atmosphere,
+    fog: recipe.postFx.fogDensity > 0,
+    groundColor: recipe.groundColor,
+    skyColor: recipe.skyColor,
+    worldRadius: recipe.worldRadius,
+    accentGroundColor: recipe.accentGroundColor,
+    terrain: recipe.terrain,
+    postFx: recipe.postFx,
+  };
+  const landmarkAssets = [
+    ...recipe.zones.flatMap((z) => z.landmarks),
+    ...theme.defaultAssets,
+  ].filter((v, i, arr) => arr.indexOf(v) === i);
+  const interactive = new Set(recipe.interactive.map((s) => s.toLowerCase()));
   blueprint.updatedAt = Date.now();
   yield {
     type: "sneak-peek",
     stage: "world",
-    note: `Level plan: ${world.assets.length} set pieces — ${world.assets.join(", ")}.`,
+    note: `World recipe: ${recipe.zones.length} zones, terrain=${recipe.terrain.kind}, radius=${recipe.worldRadius}, landmarks=${landmarkAssets.slice(0, 6).join(", ")}…`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "world" };
 
   // --- Stage: assets (streamed one by one = sneak peeks) -------------------
-  yield { type: "stage-start", stage: "assets", label: "Generating assets & textures" };
+  yield { type: "stage-start", stage: "assets", label: "Sculpting cinematic assets" };
   const assetOutputDir = deps.assetsDir
     ? `${deps.assetsDir}/${slug}/assets`
     : undefined;
-  const briefs = world.assets.slice(0, maxAssets);
-  for (let i = 0; i < briefs.length; i++) {
-    const brief = briefs[i];
-    const { asset } = await deps.assetGenerator.generate(brief, context, {
+  const placements = planLevelPlacements(theme, landmarkAssets, interactive, {
+    maxLandmarks,
+    maxAmbient,
+    recipe,
+  });
+
+  for (let i = 0; i < placements.length; i++) {
+    const planned = placements[i];
+    const { asset } = await deps.assetGenerator.generate(planned.brief, context, {
       outputDir: assetOutputDir,
+      fidelity,
     });
-    const interactive = world.interactive.has(brief.toLowerCase()) || i < 2;
-    const behavior = behaviorFor(interactive, i);
+    const behavior = behaviorFor(planned.role, planned.interactive, i, planned.brief);
     const entity: BlueprintEntity = {
       id: asset.id,
       name: asset.name,
       spec: asset.spec,
-      position: ringPosition(i, briefs.length),
+      position: planned.position,
+      rotationY: planned.rotationY,
       behavior,
-      interactive,
+      interactive: planned.interactive,
+      role: planned.role,
+      interactHint: planned.interactHint,
     };
     blueprint.entities.push(entity);
     blueprint.updatedAt = Date.now();
-    yield {
-      type: "sneak-peek",
-      stage: "assets",
-      note: `Modeled "${asset.name}" → ${asset.spec.shape} (${asset.spec.color})${asset.source ? " · .glb" : ""}${interactive ? " · interactive" : ""}.`,
-      blueprint: clone(blueprint),
-    };
-    await sleep(delayMs);
+
+    // Stream sneak peeks for landmarks; batch ambient fillers so the chat stays readable.
+    const isLandmark = planned.role === "landmark" || planned.role === "loot";
+    if (isLandmark || i === placements.length - 1) {
+      const prefabLabel = asset.spec.prefab && asset.spec.prefab !== "primitive"
+        ? asset.spec.prefab.replace(/_/g, " ")
+        : asset.spec.shape;
+      const partCount = asset.spec.parts?.length ?? 1;
+      yield {
+        type: "sneak-peek",
+        stage: "assets",
+        note: isLandmark
+          ? `Sculpted "${asset.name}" → ${prefabLabel} (${partCount} parts, ${fidelity})${planned.interactive ? " · interactive" : ""}.`
+          : `Populated the world with ${blueprint.entities.length} detailed set pieces.`,
+        blueprint: clone(blueprint),
+      };
+      await sleep(delayMs);
+    }
   }
   yield { type: "stage-complete", stage: "assets" };
 
+  // --- Prefill complete game logic (before scripts so both share one scaffold)
+  const scaffold = buildScaffold(prompt, pack, design);
+  blueprint.runtime = scaffold.runtime;
+
   // --- Stage: scripts ------------------------------------------------------
-  yield { type: "stage-start", stage: "scripts", label: "Writing gameplay logic" };
-  const { text: script } = await deps.llm.generate(
-    generatePrompt.codeGeneration("player movement and interaction", context),
+  yield { type: "stage-start", stage: "scripts", label: "Authoring complete gameplay systems" };
+  const scriptTask =
+    design.systems.controlScheme === "drive"
+      ? "arcade car driving with acceleration, steering, handbrake, boost, and checkpoint laps"
+      : design.systems.controlScheme === "fps"
+        ? "fps movement, fire, reload, sprint, and objective tracking"
+        : "player movement, sprint, jump, proximity interaction, and objective tracking";
+  const { text: llmSnippet, source: scriptSource } = await deps.llm.generate(
+    generatePrompt.codeGeneration(scriptTask, context),
     { task: "codeGeneration" },
   );
+  const script = authorGameplayScript({
+    design,
+    runtime: scaffold.runtime,
+    controls: blueprint.controls ?? controlProfileFor(design.systems.controlScheme),
+    llmSnippet: scriptSource === "llm" ? llmSnippet : undefined,
+  });
   blueprint.scripts["gameplay.ts"] = script;
+  blueprint.scripts["design.json"] = JSON.stringify(design, null, 2);
+  blueprint.scripts["world.json"] = JSON.stringify(recipe, null, 2);
+  blueprint.scripts["runtime.json"] = JSON.stringify(scaffold.runtime, null, 2);
   blueprint.updatedAt = Date.now();
   yield {
     type: "sneak-peek",
     stage: "scripts",
-    note: `Wrote gameplay.ts (${script.split("\n").length} lines).`,
+    note: `Prefill scaffold ready — ${scaffold.summary}. Wrote gameplay.ts (${script.split("\n").length} lines) with full rules/objectives/controls.`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "scripts" };
@@ -203,7 +287,7 @@ export async function* runBuild(
   yield {
     type: "sneak-peek",
     stage: "player",
-    note: `Player ready (WASD, speed ${blueprint.player.speed}, idle+walk clips).`,
+    note: `Player ready — ${blueprint.controls?.label ?? "controls"} · speed ${blueprint.player.speed} · HP ${scaffold.runtime.player.health} · ${blueprint.controls?.hudLine ?? ""}`,
     blueprint: clone(blueprint),
   };
   yield { type: "stage-complete", stage: "player" };
@@ -211,6 +295,14 @@ export async function* runBuild(
   // --- Stage: assemble -----------------------------------------------------
   yield { type: "stage-start", stage: "assemble", label: "Assembling scene" };
   blueprint.updatedAt = Date.now();
+  const interactiveCount = blueprint.entities.filter((e) => e.interactive).length;
+  const controls = blueprint.controls;
+  yield {
+    type: "sneak-peek",
+    stage: "assemble",
+    note: `Assembled ${blueprint.entities.length} props (${interactiveCount} interactive). Controls [${controls?.scheme ?? "walk"}]: ${controls?.hudLine ?? "WASD"}.`,
+    blueprint: clone(blueprint),
+  };
   yield { type: "stage-complete", stage: "assemble" };
 
   // --- Stage: package (real git workspace + zip) ---------------------------
@@ -306,17 +398,25 @@ export async function* runSteer(
     for (let i = 0; i < count; i++) {
       const { asset } = await deps.assetGenerator.generate(addBrief, context);
       const index = blueprint.entities.length;
-      const behavior = behaviorFor(false, index);
+      const role = /\b(tree|bush|rock|boulder)\b/.test(addBrief) ? "ambient" as const : "landmark" as const;
+      const behavior = behaviorFor(role, false, index, addBrief);
       const clip = animationFor(behavior, asset.id);
       if (clip) blueprint.animations[clip.id] = clip;
+      const pos = ringPosition(index, index + 1);
+      const radius = blueprint.environment.worldRadius ?? 14;
       blueprint.entities.push({
         id: asset.id,
         name: asset.name,
         spec: asset.spec,
-        position: ringPosition(index, index + 1),
+        position: {
+          x: Number((pos.x * (radius / 8)).toFixed(2)),
+          y: 0,
+          z: Number((pos.z * (radius / 8)).toFixed(2)),
+        },
         behavior,
         animation: clip,
         interactive: false,
+        role,
       });
     }
     blueprint.updatedAt = Date.now();
@@ -362,61 +462,77 @@ async function* commit(
   yield { type: "done", blueprint: clone(blueprint) };
 }
 
-async function buildPitch(
+async function authorDesignDoc(
   prompt: string,
-  blueprint: GameBlueprint,
-  llm: LLMClient,
-): Promise<string> {
-  const template = `${blueprint.gameTitle} is a ${blueprint.visualStyle} ${blueprint.gameGenre.toLowerCase()} where you explore and interact with a hand-built world inspired by: ${prompt.trim()}.`;
-  const { text, source } = await llm.generate(
-    `Write a punchy 1-2 sentence pitch for a ${blueprint.gameGenre} titled "${blueprint.gameTitle}" about: ${prompt}`,
-    { task: "freeform" },
-  );
-  // Use the model's copy only when it is a real generation; the mock is generic.
-  return source === "llm" && text.length > 0 ? text : template;
-}
-
-interface WorldPlan {
-  assets: string[];
-  interactive: Set<string>;
-  atmosphere?: string;
-}
-
-async function planWorld(
   title: string,
-  context: GameContext,
+  pack: ReturnType<typeof pickGenrePack>,
+  fidelity: FidelityLevel,
   llm: LLMClient,
-  theme: Theme,
-): Promise<WorldPlan> {
-  const { text } = await llm.generate(
-    generatePrompt.worldBuilding(title, context),
-    { task: "worldBuilding" },
+): Promise<GameDesignDoc> {
+  const fallback = pack.design(title, prompt, fidelity);
+  const { text, source } = await llm.generate(
+    generatePrompt.gameDesign(prompt, title, pack.kind, fidelity),
+    { task: "gameDesign" },
   );
-  const parsed = safeParseWorld(text);
-  const assets = parsed.assets.length > 0 ? parsed.assets : theme.defaultAssets;
-  return { assets, interactive: parsed.interactive, atmosphere: parsed.atmosphere };
+  if (source !== "llm") return fallback;
+  const parsed = safeParseJson(text);
+  if (!parsed) return fallback;
+  return {
+    ...fallback,
+    pitch: typeof parsed.pitch === "string" && parsed.pitch.length > 0 ? parsed.pitch : fallback.pitch,
+    visualStyle:
+      typeof parsed.visualStyle === "string" ? parsed.visualStyle : fallback.visualStyle,
+    artDirection:
+      typeof parsed.artDirection === "string" ? parsed.artDirection : fallback.artDirection,
+    palette: Array.isArray(parsed.palette)
+      ? parsed.palette.filter((c): c is string => typeof c === "string")
+      : fallback.palette,
+    systems: {
+      ...fallback.systems,
+      ...(typeof parsed.systems === "object" && parsed.systems
+        ? (parsed.systems as Partial<GameDesignDoc["systems"]>)
+        : {}),
+    },
+  };
 }
 
-function safeParseWorld(text: string): WorldPlan {
-  const empty: WorldPlan = { assets: [], interactive: new Set() };
+async function authorWorldRecipe(
+  title: string,
+  pack: ReturnType<typeof pickGenrePack>,
+  fidelity: FidelityLevel,
+  llm: LLMClient,
+): Promise<WorldRecipe> {
+  const fallback = pack.world(title, fidelity);
+  const { text, source } = await llm.generate(
+    generatePrompt.worldRecipe(title, pack.kind, fidelity),
+    { task: "worldRecipe" },
+  );
+  if (source !== "llm") return fallback;
+  const parsed = safeParseJson(text);
+  if (!parsed) return fallback;
+  return {
+    ...fallback,
+    atmosphere:
+      typeof parsed.atmosphere === "string" ? parsed.atmosphere : fallback.atmosphere,
+    worldRadius:
+      typeof parsed.worldRadius === "number" ? parsed.worldRadius : fallback.worldRadius,
+    globalAmbient: Array.isArray(parsed.globalAmbient)
+      ? parsed.globalAmbient.filter((a): a is string => typeof a === "string")
+      : fallback.globalAmbient,
+    interactive: Array.isArray(parsed.interactive)
+      ? parsed.interactive.filter((a): a is string => typeof a === "string")
+      : fallback.interactive,
+  };
+}
+
+function safeParseJson(text: string): Record<string, unknown> | null {
   try {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    if (start === -1 || end === -1) return empty;
-    const json = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-    const assets = Array.isArray(json.keyAssets)
-      ? json.keyAssets.filter((a): a is string => typeof a === "string")
-      : [];
-    const interactive = new Set(
-      (Array.isArray(json.interactive) ? json.interactive : [])
-        .filter((a): a is string => typeof a === "string")
-        .map((a) => a.toLowerCase()),
-    );
-    const env = json.environment as Record<string, unknown> | undefined;
-    const atmosphere = typeof env?.atmosphere === "string" ? env.atmosphere : undefined;
-    return { assets, interactive, atmosphere };
+    if (start === -1 || end === -1) return null;
+    return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
   } catch {
-    return empty;
+    return null;
   }
 }
 

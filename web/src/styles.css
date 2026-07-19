@@ -311,19 +311,60 @@ button:disabled {
   height: 100%;
 }
 
+.viewport-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(13, 14, 20, 0.82);
+  border: 1px solid color-mix(in srgb, var(--accent-2) 55%, var(--border));
+  color: #eafff5;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.viewport-loot {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(13, 14, 20, 0.72);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 .hud {
   position: absolute;
   left: 16px;
   bottom: 14px;
   right: 16px;
-  max-width: 420px;
-  padding: 6px 12px;
+  max-width: 560px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: rgba(13, 14, 20, 0.7);
   border: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hud div:first-child {
+  color: var(--text);
+  font-weight: 600;
 }
 
 @media (max-width: 860px) {

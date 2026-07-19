@@ -23,8 +23,8 @@ let lineSeq = 0;
 
 const BUILD_SUGGESTIONS = [
   "Create a forest exploration game with ruins",
+  "Genera un gioco di macchine arcade su un circuito al tramonto",
   "Build a neon sci-fi shooter on a space station",
-  "Make a spooky dungeon crawler",
 ];
 
 const STEER_SUGGESTIONS = ["make it night", "add more crates", "player faster", "make it day"];
@@ -285,9 +285,20 @@ export function App(): JSX.Element {
       <main className="viewport-wrap">
         <div className="viewport" ref={containerRef} />
         <div className="hud">
-          {blueprint
-            ? "Click preview · WASD / arrows to move · drag to orbit"
-            : "Your game preview will appear here as the build streams"}
+          {blueprint ? (
+            <>
+              <div>
+                {blueprint.runtime
+                  ? `${blueprint.runtime.difficulty} · ${blueprint.runtime.objectives.map((o) => o.label).join(" · ")}`
+                  : blueprint.pitch}
+              </div>
+              <div>
+                Click preview · {blueprint.controls?.hudLine ?? "WASD move"} · drag to orbit
+              </div>
+            </>
+          ) : (
+            "Your game preview will appear here as the build streams"
+          )}
         </div>
       </main>
     </div>
