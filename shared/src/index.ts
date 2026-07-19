@@ -36,6 +36,20 @@ export {
   inferGenreKind,
 } from "./gameDesign.js";
 
+export type {
+  GameSetupAnswers,
+  ProjectMeta,
+  SetupQuestion,
+  SetupTimeOfDay,
+} from "./setup.js";
+export {
+  composeSetupPrompt,
+  DEFAULT_SETUP_ANSWERS,
+  GENRE_KINDS,
+  SETUP_QUESTIONS,
+  SETUP_TIMES,
+} from "./setup.js";
+
 export { enrichDefinition } from "./detail.js";
 export {
   fbm,
