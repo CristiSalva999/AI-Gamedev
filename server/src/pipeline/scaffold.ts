@@ -27,9 +27,12 @@ export function parsePromptIntent(prompt: string): {
   difficulty: GameRuntimeSpec["difficulty"];
   laps?: number;
   collectGoal?: number;
+  eliminateGoal?: number;
   timeLimitSec?: number;
   wantsBoost: boolean;
   wantsHardcore: boolean;
+  /** Archery / dwarf-hunt framing for shooter builds. */
+  wantsArcheryHunt: boolean;
 } {
   const p = prompt.toLowerCase();
   const difficulty: GameRuntimeSpec["difficulty"] = /\b(hard|difficile|hardcore|nightmare)\b/.test(p)
@@ -49,16 +52,27 @@ export function parsePromptIntent(prompt: string): {
     p.match(/\b(?:collect|raccogli|gather)\s+(\d+)\b/);
   const collectGoal = collectMatch ? Number(collectMatch[1]) : undefined;
 
+  const eliminateMatch =
+    p.match(/\b(\d+)\s*(dwarfs?|dwarves|enemies|targets?)\b/) ??
+    p.match(/\b(?:shoot|kill|hunt|eliminate|defeat)\s+(\d+)\b/);
+  const eliminateGoal = eliminateMatch ? Number(eliminateMatch[1]) : undefined;
+
   const timeMatch = p.match(/\b(\d+)\s*(min|minute|minutes|minuti)\b/);
   const timeLimitSec = timeMatch ? Number(timeMatch[1]) * 60 : undefined;
+
+  const wantsArcheryHunt =
+    /\b(archery|bow|arrow|marksman)\b/.test(p) ||
+    /\b(dwarf|dwarves|dwarven|dwarv\w*)\b/.test(p);
 
   return {
     difficulty,
     laps: Number.isFinite(laps) ? laps : undefined,
     collectGoal: Number.isFinite(collectGoal) ? collectGoal : undefined,
+    eliminateGoal: Number.isFinite(eliminateGoal) ? eliminateGoal : undefined,
     timeLimitSec,
     wantsBoost: /\b(boost|nitro|turbo)\b/.test(p),
     wantsHardcore: /\b(hardcore|permadeath|no.?checkpoint)\b/.test(p),
+    wantsArcheryHunt,
   };
 }
 
@@ -142,51 +156,98 @@ function runtimeForGenre(
       };
     }
     case "shooter": {
-      const goal = intent.collectGoal ?? design.systems.collectibleGoal ?? 5;
+      const hunt = intent.wantsArcheryHunt;
+      const eliminateGoal =
+        intent.eliminateGoal ?? (hunt ? 4 : design.systems.collectibleGoal ?? 5);
+      const collectGoal = intent.collectGoal ?? (hunt ? 0 : design.systems.collectibleGoal ?? 5);
+      const objectives: RuntimeObjective[] = hunt
+        ? [
+            {
+              id: "obj_eliminate",
+              label: `Shoot ${eliminateGoal} dwarfs`,
+              type: "eliminate",
+              target: eliminateGoal,
+              progress: 0,
+              rewardScore: 200,
+            },
+            {
+              id: "obj_survive",
+              label: "Stay alive",
+              type: "survive",
+              target: 1,
+              progress: 0,
+              optional: true,
+            },
+          ]
+        : [
+            {
+              id: "obj_orbs",
+              label: `Secure ${collectGoal} energy orbs`,
+              type: "collect",
+              target: collectGoal,
+              progress: 0,
+              rewardScore: 200,
+            },
+            {
+              id: "obj_survive",
+              label: "Stay alive",
+              type: "survive",
+              target: 1,
+              progress: 0,
+              optional: true,
+            },
+          ];
+      const huntNarrative = hunt
+        ? {
+            ...narrative,
+            intro:
+              design.pitch ||
+              "Hold the archery grounds — loose arrows at the dwarf raiders before they overrun the yard.",
+            objectivePing: `Shoot ${eliminateGoal} dwarfs`,
+            winText: `Victory — cleared ${eliminateGoal} dwarf raiders from the grounds`,
+            loseText: "The dwarf raid overran your position",
+          }
+        : narrative;
       return {
         genre,
         controlScheme: "fps",
         difficulty: intent.difficulty,
         rules: {
-          winCondition: design.systems.winCondition,
+          winCondition: hunt
+            ? `Shoot ${eliminateGoal} dwarfs`
+            : design.systems.winCondition,
           loseCondition: "Health reaches zero",
           timeLimitSec: intent.timeLimitSec ?? (intent.difficulty === "hard" ? 180 : null),
         },
-        player: basePlayer,
-        objectives: [
-          {
-            id: "obj_orbs",
-            label: `Secure ${goal} energy orbs`,
-            type: "collect",
-            target: goal,
-            progress: 0,
-            rewardScore: 200,
-          },
-          {
-            id: "obj_survive",
-            label: "Stay alive",
-            type: "survive",
-            target: 1,
-            progress: 0,
-            optional: true,
-          },
-        ],
+        player: {
+          ...basePlayer,
+          // Archery: finite quiver; still reloadable (nock another arrow).
+          ammo: hunt ? (intent.difficulty === "hard" ? 8 : 12) : basePlayer.ammo,
+          maxAmmo: hunt ? (intent.difficulty === "hard" ? 8 : 12) : basePlayer.maxAmmo,
+        },
+        objectives,
         combat: {
-          fireCooldownSec: intent.difficulty === "hard" ? 0.12 : 0.18,
-          reloadSec: 1.4,
+          fireCooldownSec: hunt
+            ? intent.difficulty === "hard"
+              ? 0.35
+              : 0.45
+            : intent.difficulty === "hard"
+              ? 0.12
+              : 0.18,
+          reloadSec: hunt ? 0.8 : 1.4,
           damagePerShot: intent.difficulty === "easy" ? 28 : 18,
           spread: intent.difficulty === "hard" ? 0.08 : 0.04,
           autoReload: true,
         },
         scoring: {
           points: 0,
-          collectBonus: 250,
+          collectBonus: hunt ? 0 : 250,
           checkpointBonus: 0,
           lapBonus: 0,
-          killBonus: 100,
+          killBonus: hunt ? 150 : 100,
           timeBonusPerSecond: 1,
         },
-        narrative,
+        narrative: huntNarrative,
         features: featureFlags("fps", intent),
       };
     }

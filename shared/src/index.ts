@@ -103,8 +103,10 @@ export type {
 export { createSessionState, objectivesComplete } from "./gameRuntime.js";
 export {
   formatSessionHud,
+  isArcheryRuntime,
   sessionOnCheckpoint,
   sessionOnCollect,
+  sessionOnEliminate,
   sessionOnFire,
   sessionOnReach,
   sessionOnReload,
@@ -270,7 +272,7 @@ export interface EnvironmentSpec {
 export type EntityBehavior = "static" | "spin" | "bob" | "patrol" | "pulse";
 
 /** How an entity contributes to the level — drives motion and interaction. */
-export type EntityRole = "landmark" | "ambient" | "loot" | "path";
+export type EntityRole = "landmark" | "ambient" | "loot" | "path" | "enemy";
 
 export interface BlueprintEntity {
   id: string;
@@ -284,6 +286,8 @@ export interface BlueprintEntity {
   animation?: AnimationClip;
   interactive: boolean;
   role?: EntityRole;
+  /** Hit points for {@link EntityRole} `"enemy"` (default 1 = one-shot). */
+  hp?: number;
   /** Short prompt shown when the player is near an interactive prop. */
   interactHint?: string;
   /**

@@ -412,18 +412,27 @@ function placementFor(
   index: number,
 ): PlannedPlacement {
   const lower = brief.toLowerCase();
+  const enemy = isEnemyBrief(lower);
   const interactive =
-    interactiveNames.has(lower) ||
-    index < 2 ||
-    /\b(crate|chest|well|orb|mushroom|moss)\b/.test(lower);
+    !enemy &&
+    (interactiveNames.has(lower) ||
+      index < 2 ||
+      /\b(crate|chest|well|orb|mushroom|moss)\b/.test(lower));
   return {
     brief,
     position,
-    rotationY: 0,
-    role: interactive ? "loot" : "landmark",
+    rotationY: enemy ? (index * 0.7) % (Math.PI * 2) : 0,
+    role: enemy ? "enemy" : interactive ? "loot" : "landmark",
     interactive,
-    interactHint: interactive ? hintFor(brief) : undefined,
+    interactHint: interactive ? hintFor(brief) : enemy ? "Hostile — shoot to eliminate" : undefined,
   };
+}
+
+/** Combatants the FPS projectile loop can hit (dwarfs, dummies, marked enemies). */
+export function isEnemyBrief(brief: string): boolean {
+  return /\b(dwarf|dwarves|dwarven|enemy|enemies|raider|berserker|scout|bandit|goblin|training dummy|straw dummy)\b/i.test(
+    brief,
+  );
 }
 
 function hintFor(brief: string): string {
@@ -449,6 +458,7 @@ export function behaviorFor(
   index: number,
   brief = "",
 ): BlueprintEntity["behavior"] {
+  if (role === "enemy" || isEnemyBrief(brief)) return "patrol";
   if (interactive || role === "loot") return "bob";
   if (role === "ambient" || role === "path") return "static";
   const lower = brief.toLowerCase();

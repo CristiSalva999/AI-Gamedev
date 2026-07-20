@@ -13,6 +13,8 @@ import {
   sampleTerrainHeight,
   sessionOnCheckpoint,
   sessionOnCollect,
+  isArcheryRuntime,
+  sessionOnEliminate,
   sessionOnFire,
   sessionOnReach,
   sessionOnReload,
@@ -46,6 +48,9 @@ interface EntityUserData {
   animation?: AnimationClip;
   interactive: boolean;
   collected: boolean;
+  /** Combatant already shot down. */
+  eliminated?: boolean;
+  role?: string;
   entityId: string;
   name: string;
   hint?: string;
@@ -356,7 +361,19 @@ export function useThreeScene(): ThreeScene {
       for (const child of entities.children) {
         applyEntityMotion(child, t, delta);
       }
-      stepProjectiles(projectiles, delta);
+      stepProjectiles(projectiles, delta, entities.children, (entityId, label) => {
+        if (!sessionRef.current || !runtimeRef.current) return;
+        sessionRef.current = sessionOnEliminate(sessionRef.current, runtimeRef.current, label);
+        syncHud();
+        // Hide the defeated enemy mesh.
+        for (const child of entities.children) {
+          const data = child.userData as EntityUserData;
+          if (data.entityId === entityId) {
+            data.eliminated = true;
+            child.visible = false;
+          }
+        }
+      });
 
       if (sessionRef.current && runtimeRef.current && sessionRef.current.status === "playing") {
         sessionRef.current = tickSession(sessionRef.current, runtimeRef.current, delta);
@@ -422,11 +439,15 @@ export function useThreeScene(): ThreeScene {
                 const before = sessionRef.current.ammo;
                 sessionRef.current = sessionOnFire(sessionRef.current, runtimeRef.current);
                 if (sessionRef.current.ammo < before || sessionRef.current.message === "Fire!") {
-                  spawnProjectile(projectiles, playerRef.current);
+                  spawnProjectile(
+                    projectiles,
+                    playerRef.current,
+                    runtimeRef.current ? isArcheryRuntime(runtimeRef.current) : false,
+                  );
                 }
                 syncHud();
               } else {
-                spawnProjectile(projectiles, playerRef.current);
+                spawnProjectile(projectiles, playerRef.current, false);
               }
               fireCooldownRef.current = cooldown;
             }
@@ -601,6 +622,8 @@ export function useThreeScene(): ThreeScene {
         collected:
           collectedRef.current.has(entity.id) ||
           checkpointsHitRef.current.has(entity.id),
+        eliminated: false,
+        role: entity.role,
         entityId: entity.id,
         name: entity.name,
         hint: entity.interactHint,
@@ -859,37 +882,71 @@ function stepFly(
   return true;
 }
 
-function spawnProjectile(group: THREE.Group, player: THREE.Group): void {
+function spawnProjectile(
+  group: THREE.Group,
+  player: THREE.Group,
+  archery: boolean,
+): void {
   const bolt = new THREE.Mesh(
-    new THREE.SphereGeometry(0.12, 10, 10),
+    archery
+      ? new THREE.CylinderGeometry(0.04, 0.04, 0.55, 6)
+      : new THREE.SphereGeometry(0.12, 10, 10),
     new THREE.MeshStandardMaterial({
-      color: "#00e5ff",
-      emissive: "#00e5ff",
-      emissiveIntensity: 1.2,
+      color: archery ? "#c4a574" : "#00e5ff",
+      emissive: archery ? "#8b5a2b" : "#00e5ff",
+      emissiveIntensity: archery ? 0.35 : 1.2,
     }),
   );
+  if (archery) bolt.rotation.x = Math.PI / 2;
   const yaw = player.rotation.y;
+  const speed = archery ? 32 : 28;
   bolt.position.set(
     player.position.x - Math.sin(yaw) * 0.8,
     player.position.y + 0.9,
     player.position.z - Math.cos(yaw) * 0.8,
   );
+  bolt.rotation.y = yaw;
   bolt.userData = {
-    vx: -Math.sin(yaw) * 28,
-    vz: -Math.cos(yaw) * 28,
-    life: 1.2,
+    vx: -Math.sin(yaw) * speed,
+    vz: -Math.cos(yaw) * speed,
+    life: archery ? 1.4 : 1.2,
   };
   group.add(bolt);
 }
 
-function stepProjectiles(group: THREE.Group | null, delta: number): void {
+function stepProjectiles(
+  group: THREE.Group | null,
+  delta: number,
+  entities: THREE.Object3D[] = [],
+  onHit?: (entityId: string, label: string) => void,
+): void {
   if (!group) return;
   for (const child of [...group.children]) {
     const data = child.userData as { vx: number; vz: number; life: number };
     child.position.x += data.vx * delta;
     child.position.z += data.vz * delta;
     data.life -= delta;
-    if (data.life <= 0) {
+
+    let hit = false;
+    if (onHit) {
+      for (const entity of entities) {
+        const ud = entity.userData as EntityUserData;
+        if (ud.role !== "enemy" || ud.eliminated || !entity.visible) continue;
+        const dist = Math.hypot(
+          entity.position.x - child.position.x,
+          entity.position.z - child.position.z,
+        );
+        const radius = Math.max(0.7, (ud.footprint ?? 0.8) * 1.1);
+        if (dist <= radius) {
+          const label = /\bdwarf\b/i.test(ud.name) ? "Dwarf down!" : "Enemy down!";
+          onHit(ud.entityId, label);
+          hit = true;
+          break;
+        }
+      }
+    }
+
+    if (hit || data.life <= 0) {
       group.remove(child);
       disposeObject3D(child);
     }
@@ -984,7 +1041,7 @@ function hashPhase(id: string): number {
 
 function applyEntityMotion(child: THREE.Object3D, t: number, delta: number): void {
   const data = child.userData as EntityUserData;
-  if (data.collected) return;
+  if (data.collected || data.eliminated) return;
 
   if (data.animation) {
     const sampled = sampleClip(data.animation, t + data.phase);

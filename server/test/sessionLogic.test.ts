@@ -4,6 +4,7 @@ import {
   formatSessionHud,
   sessionOnCheckpoint,
   sessionOnCollect,
+  sessionOnEliminate,
   sessionOnFire,
   sessionOnReach,
   sessionOnReload,
@@ -93,6 +94,21 @@ describe("sessionLogic", () => {
     state = { ...state, ammo: 0 };
     state = sessionOnReload(state, runtime);
     expect(state.ammo).toBe(runtime.player.maxAmmo);
+  });
+
+  it("sessionOnEliminate scores kills and can win an archery hunt", () => {
+    const prompt =
+      'Create a shooter game called "dwarvy archery" set in dwarven archery grounds. Objective: Shoot 2 dwarfs.';
+    const pack = pickGenrePack(prompt);
+    const design = pack.design("dwarvy archery", prompt, "cinematic");
+    const runtime = buildScaffold(prompt, pack, design).runtime;
+    let state = createSessionState(runtime);
+    const need = runtime.objectives.find((o) => o.type === "eliminate")!.target;
+    for (let i = 0; i < need; i++) {
+      state = sessionOnEliminate(state, runtime, "Dwarf down!");
+    }
+    expect(state.score).toBeGreaterThan(0);
+    expect(state.status).toBe("won");
   });
 
   it("formatSessionHud includes genre cues", () => {

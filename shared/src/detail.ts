@@ -70,7 +70,8 @@ function familyFor(kind: PrefabKind, part: MeshPart): MaterialHint["family"] {
     kind === "wooden_crate" ||
     kind === "supply_crate" ||
     kind === "torch" ||
-    kind === "archery_target"
+    kind === "archery_target" ||
+    kind === "dwarf"
   ) {
     return "wood";
   }

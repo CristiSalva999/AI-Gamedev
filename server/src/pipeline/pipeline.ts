@@ -22,6 +22,7 @@ import {
   animationFor,
   behaviorFor,
   deriveTitle,
+  isEnemyBrief,
   moodLabel,
   planLevelPlacements,
   playerFor,
@@ -248,6 +249,7 @@ export async function* runBuild(
       behavior,
       interactive: planned.interactive,
       role: planned.role,
+      hp: planned.role === "enemy" ? 1 : undefined,
       interactHint: planned.interactHint,
       // Prefer per-game asset URL once packaged; kit URL works immediately in preview.
       modelUrl: assetOutputDir
@@ -457,6 +459,121 @@ export async function* runSteer(
     );
   }
 
+  const hunt = matchArcheryHuntSteer(message);
+  if (hunt) {
+    yield {
+      type: "stage-start",
+      stage: "assets",
+      label: `Spawning ${hunt.count} dwarf raiders to shoot`,
+    };
+    const context = contextFromBlueprint(blueprint);
+    const briefs = hunt.briefs;
+    for (let i = 0; i < hunt.count; i++) {
+      const brief = briefs[i % briefs.length];
+      const { asset } = await deps.assetGenerator.generate(brief, context);
+      const index = blueprint.entities.length;
+      const behavior = behaviorFor("enemy", false, index, brief);
+      const clip = animationFor(behavior, asset.id);
+      if (clip) blueprint.animations[clip.id] = clip;
+      const pos = ringPosition(index + 3, hunt.count + 6);
+      const radius = blueprint.environment.worldRadius ?? 14;
+      blueprint.entities.push({
+        id: asset.id,
+        name: asset.name,
+        spec: asset.spec,
+        position: {
+          x: Number((pos.x * (radius / 7)).toFixed(2)),
+          y: 0,
+          z: Number((pos.z * (radius / 7)).toFixed(2)),
+        },
+        behavior,
+        animation: clip,
+        interactive: false,
+        role: "enemy",
+        hp: 1,
+        interactHint: "Hostile — shoot to eliminate",
+        modelUrl: asset.modelUrl,
+        kitId: asset.kitId,
+      });
+    }
+    // Switch / ensure eliminate objective so Space-fire wins the hunt.
+    const target = Math.max(
+      hunt.count,
+      blueprint.entities.filter((e) => e.role === "enemy").length,
+    );
+    if (blueprint.runtime) {
+      const existing = blueprint.runtime.objectives.find((o) => o.type === "eliminate");
+      if (existing) {
+        existing.target = Math.max(existing.target, target);
+        existing.label = `Shoot ${existing.target} dwarfs`;
+      } else {
+        blueprint.runtime.objectives = [
+          {
+            id: "obj_eliminate",
+            label: `Shoot ${target} dwarfs`,
+            type: "eliminate",
+            target,
+            progress: 0,
+            rewardScore: 200,
+          },
+          ...blueprint.runtime.objectives.map((o) =>
+            o.type === "collect" ? { ...o, optional: true } : o,
+          ),
+        ];
+      }
+      blueprint.runtime.features = { ...blueprint.runtime.features, fire: true, reload: true };
+      blueprint.runtime.scoring = {
+        ...blueprint.runtime.scoring,
+        killBonus: Math.max(blueprint.runtime.scoring.killBonus, 150),
+      };
+      blueprint.runtime.rules = {
+        ...blueprint.runtime.rules,
+        winCondition: `Shoot ${target} dwarfs`,
+      };
+      blueprint.runtime.narrative = {
+        ...blueprint.runtime.narrative,
+        objectivePing: `Shoot ${target} dwarfs`,
+        winText: `Victory — cleared ${target} dwarf raiders`,
+      };
+      if (!blueprint.runtime.combat) {
+        blueprint.runtime.combat = {
+          fireCooldownSec: 0.45,
+          reloadSec: 0.8,
+          damagePerShot: 18,
+          spread: 0.04,
+          autoReload: true,
+        };
+      }
+      if (blueprint.runtime.player.maxAmmo <= 0) {
+        blueprint.runtime.player = {
+          ...blueprint.runtime.player,
+          ammo: 12,
+          maxAmmo: 12,
+        };
+      }
+    }
+    if (!blueprint.controls || blueprint.controls.scheme !== "fps") {
+      blueprint.controls = controlProfileFor("fps");
+    }
+    blueprint.updatedAt = Date.now();
+    yield {
+      type: "sneak-peek",
+      stage: "assets",
+      note: `Hunt ready — ${hunt.count} dwarfs on the grounds. WASD move, Space to shoot arrows.`,
+      blueprint: clone(blueprint),
+    };
+    yield { type: "stage-complete", stage: "assets" };
+    yield {
+      type: "message",
+      role: "assistant",
+      content:
+        `Updated "${blueprint.gameTitle}" into a dwarf archery hunt: shoot the raiders with Space. ` +
+        `Objective: eliminate ${target}.`,
+    };
+    yield { type: "done", blueprint: clone(blueprint) };
+    return;
+  }
+
   const addBrief = matchAddBrief(lower);
   if (addBrief) {
     yield { type: "stage-start", stage: "assets", label: `Adding "${addBrief}"` };
@@ -465,7 +582,12 @@ export async function* runSteer(
     for (let i = 0; i < count; i++) {
       const { asset } = await deps.assetGenerator.generate(addBrief, context);
       const index = blueprint.entities.length;
-      const role = /\b(tree|bush|rock|boulder)\b/.test(addBrief) ? "ambient" as const : "landmark" as const;
+      const enemy = isEnemyBrief(addBrief);
+      const role = enemy
+        ? ("enemy" as const)
+        : /\b(tree|bush|rock|boulder)\b/.test(addBrief)
+          ? ("ambient" as const)
+          : ("landmark" as const);
       const behavior = behaviorFor(role, false, index, addBrief);
       const clip = animationFor(behavior, asset.id);
       if (clip) blueprint.animations[clip.id] = clip;
@@ -484,6 +606,10 @@ export async function* runSteer(
         animation: clip,
         interactive: false,
         role,
+        hp: enemy ? 1 : undefined,
+        interactHint: enemy ? "Hostile — shoot to eliminate" : undefined,
+        modelUrl: asset.modelUrl,
+        kitId: asset.kitId,
       });
     }
     blueprint.updatedAt = Date.now();
@@ -690,6 +816,26 @@ function matchSpeed(text: string): { delta: number } | null {
  * either an explicit "storyline: ..." prefix or a "change/make the story ..."
  * instruction so follow-ups can iterate on narrative, not just visuals.
  */
+/** Steer phrases like "make me shoot dwarfs" / "update to archery hunt". */
+function matchArcheryHuntSteer(
+  message: string,
+): { count: number; briefs: string[] } | null {
+  const m = message.toLowerCase();
+  const wantsHunt =
+    (/\b(shoot|kill|hunt|fight|eliminate)\b/.test(m) &&
+      /\b(dwarf|dwarves|dwarfs|enemy|enemies|raider)\b/.test(m)) ||
+    (/\b(dwarf|dwarves|dwarfs)\b/.test(m) &&
+      /\b(archery|bow|arrow|update|make|want|play)\b/.test(m)) ||
+    /\barchery\b/.test(m) && /\b(dwarf|dwarves|hunt|raid)\b/.test(m);
+  if (!wantsHunt) return null;
+  const n = m.match(/\b(\d+)\s*(dwarfs?|dwarves|enemies)\b/);
+  const count = n ? Math.min(12, Math.max(3, Number(n[1]))) : 6;
+  return {
+    count,
+    briefs: ["dwarf raider", "dwarf scout", "dwarf berserker", "dwarf archer", "dwarf wanderer"],
+  };
+}
+
 function matchStoryEdit(message: string): string | null {
   const prefixed = message.match(
     /^\s*(?:storyline|story|plot|pitch|lore|narrative)\s*[:-]\s*(.+)$/i,

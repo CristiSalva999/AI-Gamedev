@@ -126,6 +126,28 @@ export function sessionOnFire(
   };
 }
 
+/**
+ * Register a successful hit that eliminates an enemy (or finishes it off).
+ * Advances `"eliminate"` objectives and awards {@link ScoringRules.killBonus}.
+ */
+export function sessionOnEliminate(
+  state: GameSessionState,
+  runtime: GameRuntimeSpec,
+  label = "Enemy down",
+): GameSessionState {
+  if (state.status !== "playing") return state;
+  let next = bump(state, "eliminate", 1);
+  next = {
+    ...next,
+    score: next.score + runtime.scoring.killBonus,
+    message: label,
+  };
+  if (objectivesComplete(next)) {
+    return { ...next, status: "won", message: runtime.narrative.winText };
+  }
+  return next;
+}
+
 export function sessionOnReload(
   state: GameSessionState,
   runtime: GameRuntimeSpec,
@@ -142,9 +164,22 @@ export function formatSessionHud(state: GameSessionState, runtime: GameRuntimeSp
     return `Lap ${state.lap}/${runtime.racing.laps} · CP ${state.checkpointsThisLap}/${runtime.racing.checkpointsPerLap} · Score ${state.score} · ${objLine}`;
   }
   if (runtime.features.fire) {
-    return `HP ${state.health} · Ammo ${state.ammo}/${runtime.player.maxAmmo} · Score ${state.score} · ${objLine}`;
+    const archery = isArcheryRuntime(runtime);
+    const ammoLabel = archery ? "Arrows" : "Ammo";
+    return `HP ${state.health} · ${ammoLabel} ${state.ammo}/${runtime.player.maxAmmo} · Score ${state.score} · ${objLine}`;
   }
   return `HP ${state.health} · Score ${state.score} · Loot ${state.objectives.find((o) => o.type === "collect")?.progress ?? 0} · ${objLine}`;
+}
+
+/** Heuristic: bow/archery framing for HUD + projectile styling. */
+export function isArcheryRuntime(runtime: GameRuntimeSpec): boolean {
+  const blob = [
+    runtime.rules.winCondition,
+    runtime.narrative.intro,
+    runtime.narrative.objectivePing,
+    ...runtime.objectives.map((o) => o.label),
+  ].join(" ");
+  return /\b(archery|arrow|bow|dwarf|dwarves|marksman)\b/i.test(blob);
 }
 
 function bump(

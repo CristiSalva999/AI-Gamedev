@@ -37,6 +37,20 @@ describe("buildScaffold", () => {
     expect(collect?.target).toBe(4);
     expect(scaffold.runtime.features.interact).toBe(true);
   });
+
+  it("prefills a dwarf archery hunt with eliminate objectives", () => {
+    const prompt =
+      'Create a shooter game called "dwarvy archery" set in dwarven archery training grounds during the day. Objective: Shoot the dwarf raiders.';
+    const pack = pickGenrePack(prompt);
+    expect(pack.kind).toBe("shooter");
+    const design = pack.design("dwarvy archery", prompt, "cinematic");
+    const scaffold = buildScaffold(prompt, pack, design);
+    const eliminate = scaffold.runtime.objectives.find((o) => o.type === "eliminate");
+    expect(eliminate).toBeTruthy();
+    expect(eliminate!.target).toBeGreaterThanOrEqual(4);
+    expect(scaffold.runtime.features.fire).toBe(true);
+    expect(scaffold.runtime.rules.winCondition.toLowerCase()).toMatch(/dwarf/);
+  });
 });
 
 describe("authorGameplayScript", () => {

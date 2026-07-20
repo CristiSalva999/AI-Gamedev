@@ -30,7 +30,7 @@ describe("adaptPackToPlan", () => {
 
     const world = adapted.world("dwarvy archery", "cinematic");
     const landmarkText = world.zones.flatMap((z) => z.landmarks).join(" ");
-    expect(landmarkText).toMatch(/archery|hay|quiver|dummy/i);
+    expect(landmarkText).toMatch(/dwarf|archery|hay|quiver/i);
     expect(world.interactive.join(" ")).not.toMatch(/energy orb/i);
   });
 

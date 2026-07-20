@@ -33,7 +33,8 @@ export type PrefabKind =
   | "grandstand"
   | "cone_marker"
   | "archery_target"
-  | "hay_bale";
+  | "hay_bale"
+  | "dwarf";
 
 export interface MaterialHint {
   family: "bark" | "stone" | "foliage" | "metal" | "wood" | "asphalt" | "emissive" | "paint";
@@ -114,6 +115,9 @@ export function prefabForBrief(brief: string): PrefabKind {
   if (/\b(traffic cone|cone marker|marker cone)\b/.test(t)) return "cone_marker";
   if (/\b(archery\s*target|bullseye|target\s*butt)\b/.test(t)) return "archery_target";
   if (/\b(hay\s*bale|straw\s*bale)\b/.test(t)) return "hay_bale";
+  if (/\b(dwarf|dwarves|dwarven|raider|berserker|scout|bandit|goblin)\b/.test(t)) {
+    return "dwarf";
+  }
   if (/\b(quiver|practice\s*post|timber\s*post|watch\s*post)\b/.test(t)) return "stone_pillar";
   if (/\b(training\s*dummy|straw\s*dummy|scarecrow)\b/.test(t)) return "statue";
   if (/\b(hollow|gnarled).*\btree|\btree.*hollow\b/.test(t)) return "hollow_tree";
@@ -975,6 +979,56 @@ const PREFABS: Record<PrefabKind, PrefabFactory> = {
         size: { x: 1.32, y: 0.08, z: 0.82 },
         offset: { x: 0, y: 0.72, z: 0 },
         roughness: 0.9,
+      },
+    ],
+  }),
+
+  /** Compact stylized dwarf — readable silhouette for archery hunts. */
+  dwarf: () => ({
+    kind: "dwarf",
+    shape: "cylinder",
+    color: "#8b5a2b",
+    size: { x: 0.9, y: 1.55, z: 0.9 },
+    roughness: 0.75,
+    metalness: 0.05,
+    parts: [
+      {
+        shape: "cylinder",
+        color: "#5c4033",
+        size: { x: 0.55, y: 0.7, z: 0.55 },
+        offset: { x: 0, y: 0.35, z: 0 },
+        roughness: 0.85,
+        materialHint: { family: "wood" },
+      },
+      {
+        shape: "cylinder",
+        color: "#8b5a2b",
+        size: { x: 0.7, y: 0.55, z: 0.7 },
+        offset: { x: 0, y: 0.95, z: 0 },
+        roughness: 0.7,
+        materialHint: { family: "wood" },
+      },
+      {
+        shape: "sphere",
+        color: "#d4a574",
+        size: { x: 0.45, y: 0.45, z: 0.45 },
+        offset: { x: 0, y: 1.4, z: 0 },
+        roughness: 0.65,
+      },
+      {
+        shape: "cylinder",
+        color: "#3d4a32",
+        size: { x: 0.55, y: 0.22, z: 0.55 },
+        offset: { x: 0, y: 1.62, z: 0 },
+        roughness: 0.8,
+        materialHint: { family: "foliage" },
+      },
+      {
+        shape: "box",
+        color: "#c0392b",
+        size: { x: 0.35, y: 0.55, z: 0.12 },
+        offset: { x: 0.42, y: 0.95, z: 0 },
+        roughness: 0.6,
       },
     ],
   }),
