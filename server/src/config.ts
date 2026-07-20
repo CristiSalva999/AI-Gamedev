@@ -48,7 +48,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       apiKey: env.LLM_API_KEY ?? "lm-studio",
       model: env.LLM_MODEL ?? "gemma-4-26b-a4b-it",
       allowMockFallback: bool(env.LLM_ALLOW_MOCK_FALLBACK, true),
-      timeoutMs: int(env.LLM_TIMEOUT_MS, 30_000),
+      // Local reasoning models (e.g. gemma) can spend many seconds "thinking"
+      // before emitting the answer; a short timeout aborts mid-generation and
+      // silently drops to the mock. Default generously; override per setup.
+      timeoutMs: int(env.LLM_TIMEOUT_MS, 180_000),
     },
     blenderBin: env.BLENDER_BIN ?? "blender",
   };

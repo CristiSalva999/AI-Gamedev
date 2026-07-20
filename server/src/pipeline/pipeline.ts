@@ -188,7 +188,14 @@ export async function* runBuild(
   yield { type: "stage-complete", stage: "world" };
 
   // --- Stage: assets (streamed one by one = sneak peeks) -------------------
-  yield { type: "stage-start", stage: "assets", label: "Sculpting cinematic assets" };
+  const blenderReady = await deps.assetGenerator.blenderAvailable();
+  yield {
+    type: "stage-start",
+    stage: "assets",
+    label: blenderReady
+      ? "Sculpting cinematic assets with Blender"
+      : "Sculpting cinematic assets (procedural)",
+  };
   const assetOutputDir = deps.assetsDir
     ? `${deps.assetsDir}/${slug}/assets`
     : undefined;
@@ -198,12 +205,18 @@ export async function* runBuild(
     recipe,
   });
 
+  let blenderAuthored = 0;
   for (let i = 0; i < placements.length; i++) {
     const planned = placements[i];
-    const { asset } = await deps.assetGenerator.generate(planned.brief, context, {
-      outputDir: assetOutputDir,
-      fidelity,
-    });
+    const { asset, source: assetSource } = await deps.assetGenerator.generate(
+      planned.brief,
+      context,
+      {
+        outputDir: assetOutputDir,
+        fidelity,
+      },
+    );
+    if (assetSource === "blender") blenderAuthored++;
     const behavior = behaviorFor(planned.role, planned.interactive, i, planned.brief);
     const entity: BlueprintEntity = {
       id: asset.id,
@@ -237,6 +250,14 @@ export async function* runBuild(
       await sleep(delayMs);
     }
   }
+  yield {
+    type: "message",
+    role: "assistant",
+    content:
+      blenderAuthored > 0
+        ? `Authored ${blenderAuthored}/${placements.length} assets with Blender (headless .glb export).`
+        : `Generated ${placements.length} assets procedurally. Install Blender on the machine running the server (or set BLENDER_BIN) to author meshes with Blender — health shows the current mode.`,
+  };
   yield { type: "stage-complete", stage: "assets" };
 
   // --- Prefill complete game logic (before scripts so both share one scaffold)
