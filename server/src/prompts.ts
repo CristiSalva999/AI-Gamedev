@@ -137,8 +137,20 @@ Return ONLY JSON with this shape:
   "artDirection": string
 }`.trim(),
 
-  worldRecipe: (title: string, genre: GenreKind, fidelity: FidelityLevel): string => `
+  worldRecipe: (
+    title: string,
+    genre: GenreKind,
+    fidelity: FidelityLevel,
+    prompt = "",
+  ): string => `
 You are a world director. Author a WORLD RECIPE JSON for "${title}" (${genre}, fidelity=${fidelity}).
+
+USER REQUEST (honour the setting, time of day, and storyline — do NOT invent an unrelated sci-fi hangar or forest if the prompt asks for something else):
+"""
+${prompt.slice(0, 4000)}
+"""
+
+Landmark and ambient briefs MUST match the requested setting (e.g. archery targets + hay bales for a dwarven archery range; stone ruins for a forest; neon props only when the prompt is sci-fi).
 
 Return ONLY JSON:
 {

@@ -64,6 +64,13 @@ export {
   SETUP_TIMES,
 } from "./setup.js";
 
+export type { SettingLighting, SettingMotif, SettingMotifId } from "./settingMotif.js";
+export {
+  detectLightingFromPrompt,
+  detectSettingMotif,
+  extractStoryline,
+} from "./settingMotif.js";
+
 export { enrichDefinition } from "./detail.js";
 export {
   fbm,

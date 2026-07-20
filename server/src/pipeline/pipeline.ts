@@ -16,6 +16,7 @@ import { generatePrompt } from "../prompts.js";
 import type { AssetGenerator } from "../services/assetGenerator.js";
 import type { GamePackager } from "../services/gamePackager.js";
 import type { LLMClient } from "../services/llmClient.js";
+import { adaptPackToPlan } from "./adaptPack.js";
 import { packForKind, pickGenrePack } from "./genrePacks.js";
 import {
   animationFor,
@@ -102,7 +103,9 @@ export async function* runBuild(
   yield { type: "message", role: "assistant", content: summarizePlan(plan) };
   yield { type: "stage-complete", stage: "plan" };
 
-  const pack = packForKind(plan.genre);
+  // Genre systems come from the pack; aesthetic/assets come from the setting
+  // motif so mock/offline builds don't ignore "dwarvy archery" for sci-fi props.
+  const pack = adaptPackToPlan(packForKind(plan.genre), plan, prompt);
   const theme = structuredClone(pack.theme);
   const title = plan.title || deriveTitle(prompt);
   const slug = slugify(title);
@@ -129,12 +132,28 @@ export async function* runBuild(
   yield {
     type: "message",
     role: "assistant",
-    content: `On it — building "${title}" as a ${fidelity} ${pack.kind} experience (${theme.genre.toLowerCase()}, ${moodLabel(theme.environment.lighting)}). The local model will author design + world recipes; I'll stream sneak peeks.`,
+    content: `On it — building "${title}" as a ${fidelity} ${pack.kind} experience (${theme.genre.toLowerCase()}, ${moodLabel(theme.environment.lighting)}, motif: ${pack.motif.label}). The local model will author design + world recipes; I'll stream sneak peeks.`,
   };
 
   // --- Stage: design -------------------------------------------------------
   yield { type: "stage-start", stage: "design", label: "Authoring game design doc" };
-  const design = await authorDesignDoc(prompt, title, pack, fidelity, deps.llm);
+  const { design, source: designSource } = await authorDesignDoc(
+    prompt,
+    title,
+    pack,
+    fidelity,
+    deps.llm,
+  );
+  if (designSource === "mock") {
+    yield {
+      type: "message",
+      role: "assistant",
+      content:
+        `LM Studio timed out or was unreachable — using the offline motif kit ` +
+        `("${pack.motif.label}") so props match your setting. Start the local server ` +
+        `at ${deps.llm.baseUrl} (or raise LLM_TIMEOUT_MS) for richer LLM-authored designs.`,
+    };
+  }
   blueprint.design = design;
   blueprint.pitch = design.pitch;
   blueprint.visualStyle = design.visualStyle;
@@ -160,7 +179,7 @@ export async function* runBuild(
 
   // --- Stage: world --------------------------------------------------------
   yield { type: "stage-start", stage: "world", label: "Authoring world recipe" };
-  const recipe = await authorWorldRecipe(title, pack, fidelity, deps.llm);
+  const recipe = await authorWorldRecipe(title, pack, fidelity, deps.llm, prompt);
   blueprint.worldRecipe = recipe;
   blueprint.environment = {
     lighting: recipe.lighting,
@@ -514,30 +533,36 @@ async function authorDesignDoc(
   pack: ReturnType<typeof pickGenrePack>,
   fidelity: FidelityLevel,
   llm: LLMClient,
-): Promise<GameDesignDoc> {
+): Promise<{ design: GameDesignDoc; source: "llm" | "mock" }> {
   const fallback = pack.design(title, prompt, fidelity);
   const { text, source } = await llm.generate(
     generatePrompt.gameDesign(prompt, title, pack.kind, fidelity),
     { task: "gameDesign" },
   );
-  if (source !== "llm") return fallback;
+  if (source !== "llm") return { design: fallback, source: "mock" };
   const parsed = safeParseJson(text);
-  if (!parsed) return fallback;
+  if (!parsed) return { design: fallback, source: "mock" };
   return {
-    ...fallback,
-    pitch: typeof parsed.pitch === "string" && parsed.pitch.length > 0 ? parsed.pitch : fallback.pitch,
-    visualStyle:
-      typeof parsed.visualStyle === "string" ? parsed.visualStyle : fallback.visualStyle,
-    artDirection:
-      typeof parsed.artDirection === "string" ? parsed.artDirection : fallback.artDirection,
-    palette: Array.isArray(parsed.palette)
-      ? parsed.palette.filter((c): c is string => typeof c === "string")
-      : fallback.palette,
-    systems: {
-      ...fallback.systems,
-      ...(typeof parsed.systems === "object" && parsed.systems
-        ? (parsed.systems as Partial<GameDesignDoc["systems"]>)
-        : {}),
+    source: "llm",
+    design: {
+      ...fallback,
+      pitch:
+        typeof parsed.pitch === "string" && parsed.pitch.length > 0
+          ? parsed.pitch
+          : fallback.pitch,
+      visualStyle:
+        typeof parsed.visualStyle === "string" ? parsed.visualStyle : fallback.visualStyle,
+      artDirection:
+        typeof parsed.artDirection === "string" ? parsed.artDirection : fallback.artDirection,
+      palette: Array.isArray(parsed.palette)
+        ? parsed.palette.filter((c): c is string => typeof c === "string")
+        : fallback.palette,
+      systems: {
+        ...fallback.systems,
+        ...(typeof parsed.systems === "object" && parsed.systems
+          ? (parsed.systems as Partial<GameDesignDoc["systems"]>)
+          : {}),
+      },
     },
   };
 }
@@ -547,19 +572,35 @@ async function authorWorldRecipe(
   pack: ReturnType<typeof pickGenrePack>,
   fidelity: FidelityLevel,
   llm: LLMClient,
+  prompt: string,
 ): Promise<WorldRecipe> {
   const fallback = pack.world(title, fidelity);
   const { text, source } = await llm.generate(
-    generatePrompt.worldRecipe(title, pack.kind, fidelity),
+    generatePrompt.worldRecipe(title, pack.kind, fidelity, prompt),
     { task: "worldRecipe" },
   );
   if (source !== "llm") return fallback;
   const parsed = safeParseJson(text);
   if (!parsed) return fallback;
+  const lighting =
+    parsed.lighting === "day" ||
+    parsed.lighting === "dusk" ||
+    parsed.lighting === "night" ||
+    parsed.lighting === "cave"
+      ? parsed.lighting
+      : fallback.lighting;
   return {
     ...fallback,
     atmosphere:
       typeof parsed.atmosphere === "string" ? parsed.atmosphere : fallback.atmosphere,
+    lighting,
+    skyColor: typeof parsed.skyColor === "string" ? parsed.skyColor : fallback.skyColor,
+    groundColor:
+      typeof parsed.groundColor === "string" ? parsed.groundColor : fallback.groundColor,
+    accentGroundColor:
+      typeof parsed.accentGroundColor === "string"
+        ? parsed.accentGroundColor
+        : fallback.accentGroundColor,
     worldRadius:
       typeof parsed.worldRadius === "number" ? parsed.worldRadius : fallback.worldRadius,
     globalAmbient: Array.isArray(parsed.globalAmbient)
@@ -568,6 +609,9 @@ async function authorWorldRecipe(
     interactive: Array.isArray(parsed.interactive)
       ? parsed.interactive.filter((a): a is string => typeof a === "string")
       : fallback.interactive,
+    zones: Array.isArray(parsed.zones) && parsed.zones.length > 0
+      ? (parsed.zones as WorldRecipe["zones"])
+      : fallback.zones,
   };
 }
 

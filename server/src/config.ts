@@ -3,6 +3,9 @@
  * All environment access happens here so the rest of the code depends on a
  * typed object rather than scattered `process.env` reads.
  */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 export interface ServerConfig {
   port: number;
   dataDir: string;
@@ -28,12 +31,18 @@ function int(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** Default data dir next to the compiled/source module (Windows-safe). */
+export function defaultDataDir(moduleUrl: string = import.meta.url): string {
+  // `.pathname` on `file:` URLs yields `/C:/...` on Windows; fs then mkdir's `C:\C:\...`.
+  return fileURLToPath(new URL("../data", moduleUrl));
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
-  const dataDir = env.DATA_DIR ?? new URL("../data", import.meta.url).pathname;
+  const dataDir = env.DATA_DIR ?? defaultDataDir();
   return {
     port: int(env.PORT, 3001),
     dataDir,
-    gamesDir: env.GAMES_DIR ?? `${dataDir}/games`,
+    gamesDir: env.GAMES_DIR ?? path.join(dataDir, "games"),
     llm: {
       baseUrl: env.LLM_BASE_URL ?? "http://localhost:1234/v1",
       apiKey: env.LLM_API_KEY ?? "lm-studio",
