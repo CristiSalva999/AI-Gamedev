@@ -66,8 +66,15 @@ function familyFor(kind: PrefabKind, part: MeshPart): MaterialHint["family"] {
   ) {
     return "stone";
   }
-  if (kind === "wooden_crate" || kind === "supply_crate" || kind === "torch") return "wood";
-  if (kind === "mushroom" || kind === "moss_patch") return "foliage";
+  if (
+    kind === "wooden_crate" ||
+    kind === "supply_crate" ||
+    kind === "torch" ||
+    kind === "archery_target"
+  ) {
+    return "wood";
+  }
+  if (kind === "mushroom" || kind === "moss_patch" || kind === "hay_bale") return "foliage";
   return "stone";
 }
 

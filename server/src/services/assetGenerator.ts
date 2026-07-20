@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -21,6 +21,43 @@ import type { LLMClient } from "./llmClient.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Candidate Blender executables. On Windows the installer rarely adds
+ * `blender` to PATH, so we also probe the usual Program Files locations.
+ */
+export async function blenderCandidatePaths(
+  configured = process.env.BLENDER_BIN ?? "blender",
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+  const candidates = [configured];
+  if (process.platform === "win32") {
+    const roots = [
+      env["ProgramFiles"],
+      env["ProgramFiles(x86)"],
+      env.LOCALAPPDATA,
+      // Fallbacks when the parent shell did not forward ProgramFiles.
+      "C:\\Program Files",
+      "C:\\Program Files (x86)",
+    ].filter((v): v is string => Boolean(v));
+    for (const root of [...new Set(roots)]) {
+      const foundation = path.join(root, "Blender Foundation");
+      try {
+        const versions = await readdir(foundation);
+        // Prefer newest folder name first (Blender 4.5 > 4.0 > 3.6…).
+        for (const version of versions.sort().reverse()) {
+          candidates.push(path.join(foundation, version, "blender.exe"));
+        }
+      } catch {
+        // Directory missing — ignore.
+      }
+      // Steam / flat installs sometimes skip the versioned folder.
+      candidates.push(path.join(root, "Blender", "blender.exe"));
+    }
+  }
+  // Deduplicate while preserving order.
+  return [...new Set(candidates.filter(Boolean))];
+}
+
 export interface AssetGenerationResult {
   asset: Asset;
   blenderScript: string;
@@ -38,8 +75,10 @@ export interface AssetGenerator {
     context: GameContext,
     options?: { outputDir?: string; fidelity?: FidelityLevel },
   ): Promise<AssetGenerationResult>;
-  /** Whether a real Blender binary is on PATH. */
+  /** Whether a real Blender binary is on PATH / configured. */
   blenderAvailable(): Promise<boolean>;
+  /** Optional diagnostics for startup logs and health. */
+  probeBlender?(): Promise<BlenderProbeResult>;
 }
 
 const SHAPE_KEYWORDS: Array<[PrimitiveShape, string[]]> = [
@@ -65,6 +104,14 @@ export class MockBlenderAssetGenerator implements AssetGenerator {
 
   async blenderAvailable(): Promise<boolean> {
     return false;
+  }
+
+  async probeBlender(): Promise<BlenderProbeResult> {
+    return {
+      available: false,
+      tried: [],
+      hint: "Using procedural mock generator (tests / offline).",
+    };
   }
 
   async generate(
@@ -100,12 +147,21 @@ export class MockBlenderAssetGenerator implements AssetGenerator {
   }
 }
 
+export interface BlenderProbeResult {
+  available: boolean;
+  path?: string;
+  /** Candidates that were tried (for startup / health diagnostics). */
+  tried: string[];
+  hint?: string;
+}
+
 /**
  * Prefer real Blender when `BLENDER_BIN` / `blender` is available; otherwise
  * fall through to procedural GLB generation (cloud-safe).
  */
 export class HybridBlenderAssetGenerator implements AssetGenerator {
   private blenderPath: string | null | undefined;
+  private lastProbe: BlenderProbeResult | undefined;
 
   constructor(
     private readonly llm: LLMClient,
@@ -116,6 +172,18 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
   async blenderAvailable(): Promise<boolean> {
     const resolved = await this.resolveBlender();
     return resolved !== null;
+  }
+
+  /** Full probe result for startup logs and `/api/health`. */
+  async probeBlender(): Promise<BlenderProbeResult> {
+    await this.resolveBlender();
+    return (
+      this.lastProbe ?? {
+        available: false,
+        tried: [],
+        hint: blenderMissingHint(this.blenderBin),
+      }
+    );
   }
 
   async generate(
@@ -174,14 +242,44 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
 
   private async resolveBlender(): Promise<string | null> {
     if (this.blenderPath !== undefined) return this.blenderPath;
-    try {
-      await execFileAsync(this.blenderBin, ["--version"], { timeout: 5_000 });
-      this.blenderPath = this.blenderBin;
-    } catch {
-      this.blenderPath = null;
+    const candidates = await blenderCandidatePaths(this.blenderBin);
+    for (const candidate of candidates) {
+      try {
+        // windowsHide avoids a flashing console; longer timeout for cold HDD starts.
+        await execFileAsync(candidate, ["--version"], {
+          timeout: 15_000,
+          windowsHide: true,
+        });
+        this.blenderPath = candidate;
+        this.lastProbe = { available: true, path: candidate, tried: candidates };
+        return this.blenderPath;
+      } catch {
+        // try next candidate
+      }
     }
+    this.blenderPath = null;
+    this.lastProbe = {
+      available: false,
+      tried: candidates,
+      hint: blenderMissingHint(this.blenderBin),
+    };
     return this.blenderPath;
   }
+}
+
+/** Short, copy-pasteable guidance when Blender is missing from PATH / env. */
+export function blenderMissingHint(configured = "blender"): string {
+  if (process.platform === "win32") {
+    return (
+      `Create server/.env with one line: ` +
+      `BLENDER_BIN=C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe ` +
+      `then restart npm run dev. (Your blender.exe works in CMD but is not on PATH.)`
+    );
+  }
+  return (
+    `Install Blender or set BLENDER_BIN to the binary path (current: "${configured}"), ` +
+    `then restart the server.`
+  );
 }
 
 /** Deterministic brief -> geometry mapping (pure, easily testable). */

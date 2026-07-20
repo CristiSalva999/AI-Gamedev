@@ -1,11 +1,18 @@
-import type { GenerateTask } from "@ai-gamedev/shared";
+import {
+  detectLightingFromPrompt,
+  detectSettingMotif,
+  extractSetting,
+  extractTitle,
+  type GenerateTask,
+} from "@ai-gamedev/shared";
 
 /**
  * Deterministic offline stand-in for the local LLM. It inspects the prompt (and
  * an optional task hint) to return a plausible, task-appropriate response so the
  * pipeline stays fully functional and testable without LM Studio running.
  *
- * This is intentionally simple: it is a development aid, not a model.
+ * Responses are setting-aware (motifs) so a "dwarvy archery" shooter does not
+ * collapse into the hard-coded sci-fi hangar kit.
  */
 export function mockCompletion(prompt: string, task?: GenerateTask): string {
   const resolved = task ?? inferTask(prompt);
@@ -67,53 +74,20 @@ function mockDialogue(prompt: string): string {
 }
 
 function mockWorld(prompt: string): string {
-  const location = extractQuoted(prompt, "Forgotten Grove");
-  const forest = /forest|ruin|grove|woodland|nature|jungle/i.test(prompt);
-  if (forest) {
-    return JSON.stringify(
-      {
-        description: `${location} is a sun-dappled forest clearing. A cracked stone path leads north to moss-eaten ruins — an archway, a toppled guardian statue, and a well that still holds cold water.`,
-        keyAssets: [
-          "broken stone archway",
-          "glowing moss patches",
-          "ancient well",
-          "toppled statue",
-          "wooden supply crate",
-          "gnarled hollow tree",
-          "fallen stone column",
-          "ruin wall",
-        ],
-        environment: {
-          lighting: "dappled daylight",
-          atmosphere: "birds overhead, soft mist between the trees",
-        },
-        npcs: ["wandering herbalist"],
-        interactive: [
-          "ancient well",
-          "wooden supply crate",
-          "glowing moss patches",
-        ],
-        loot: ["moonpetal", "rusted key", "healing tonic", "glowing moss"],
-      },
-      null,
-      2,
-    );
-  }
+  const location = extractQuoted(prompt, extractSetting(prompt) || "Forgotten Grove");
+  const motif = detectSettingMotif(prompt, location);
+  const lighting = detectLightingFromPrompt(prompt) ?? "day";
   return JSON.stringify(
     {
-      description: `${location} is a hushed clearing where bioluminescent moss reclaims ruined stonework. Mist pools between fallen columns.`,
-      keyAssets: [
-        "broken stone archway",
-        "glowing moss patches",
-        "ancient well",
-        "toppled statue",
-        "wooden supply crate",
-        "gnarled hollow tree",
-      ],
-      environment: { lighting: "cool moonlight", atmosphere: "misty, quiet" },
-      npcs: ["wandering herbalist"],
-      interactive: ["ancient well", "wooden supply crate"],
-      loot: ["moonpetal", "rusted key", "healing tonic"],
+      description: `${location} is a playable slice of ${motif.label}. ${motif.atmosphere}.`,
+      keyAssets: [...motif.landmarks, ...motif.ambient.slice(0, 3)],
+      environment: {
+        lighting,
+        atmosphere: motif.atmosphere,
+      },
+      npcs: ["local guide"],
+      interactive: [...motif.interactive],
+      loot: ["supply bundle", "marked token", "healing tonic"],
     },
     null,
     2,
@@ -121,8 +95,10 @@ function mockWorld(prompt: string): string {
 }
 
 function mockGameDesign(prompt: string): string {
-  const racing = /race|racing|arcade|car|macchin/i.test(prompt);
-  const title = extractQuoted(prompt, racing ? "Neon Circuit" : "Forest Exploration Ruins");
+  const racing = /\b(race|racing|arcade|car|macchin)\b/i.test(prompt);
+  const shooter = /\b(shooter|fps|archery|marksman)\b/i.test(prompt);
+  const motif = detectSettingMotif(prompt);
+  const title = extractTitle(prompt) || extractQuoted(prompt, racing ? "Neon Circuit" : "Untitled Game");
   if (racing) {
     return JSON.stringify(
       {
@@ -147,23 +123,26 @@ function mockGameDesign(prompt: string): string {
       2,
     );
   }
+  const genre = shooter ? "shooter" : "exploration";
+  const controlScheme = shooter ? "fps" : "walk";
   return JSON.stringify(
     {
       title,
-      genre: "exploration",
-      pitch:
-        "Wander a mist-soft forest where ruined stone still remembers old rites — gather relics before night closes the canopy.",
-      visualStyle: "cinematic detailed nature with weathered stone and layered foliage",
+      genre,
+      pitch: `Play through ${motif.label}: ${motif.atmosphere}.`,
+      visualStyle: motif.visualStyle,
       fidelity: "cinematic",
-      palette: ["#2d6a3e", "#8b5a2b", "#c4a574", "#87c4d9"],
+      palette: motif.palette,
       systems: {
-        controlScheme: "walk",
+        controlScheme,
         cameraMode: "orbit_follow",
-        objectives: ["Reach the archway", "Collect 3 relics"],
-        winCondition: "Collect 3 relics",
-        collectibleGoal: 3,
+        objectives: shooter
+          ? ["Hit every archery target", "Clear the training ground"]
+          : ["Reach the landmark", "Collect 3 relics"],
+        winCondition: shooter ? "Score hits on every target" : "Collect 3 relics",
+        collectibleGoal: shooter ? 5 : 3,
       },
-      artDirection: "Weathered limestone, bioluminescent moss, dense canopy, soft god-rays",
+      artDirection: motif.atmosphere,
     },
     null,
     2,
@@ -171,7 +150,7 @@ function mockGameDesign(prompt: string): string {
 }
 
 function mockWorldRecipe(prompt: string): string {
-  const racing = /racing|race|arcade|car|track/i.test(prompt);
+  const racing = /\b(racing|race|arcade)\b/i.test(prompt) && /\b(car|track|circuit|lap)\b/i.test(prompt);
   if (racing) {
     return JSON.stringify(
       {
@@ -214,16 +193,18 @@ function mockWorldRecipe(prompt: string): string {
       2,
     );
   }
+  const motif = detectSettingMotif(prompt);
+  const lighting = detectLightingFromPrompt(prompt) ?? "day";
   return JSON.stringify(
     {
-      atmosphere: "dappled canopy light over quiet ruins",
-      lighting: "day",
-      skyColor: "#7eb6d9",
-      groundColor: "#2a4a30",
-      accentGroundColor: "#3d6b45",
+      atmosphere: motif.atmosphere,
+      lighting,
+      skyColor: motif.skyColor,
+      groundColor: motif.groundColor,
+      accentGroundColor: motif.accentGroundColor,
       worldRadius: 28,
       terrain: {
-        kind: "rolling",
+        kind: motif.terrainKind ?? "rolling",
         seed: 42,
         heightScale: 1.8,
         roughness: 0.55,
@@ -238,18 +219,18 @@ function mockWorldRecipe(prompt: string): string {
       },
       zones: [
         {
-          id: "ruins",
-          name: "Fallen Sanctum",
+          id: "primary",
+          name: motif.label,
           purpose: "primary landmark",
           center: { x: 0, z: -11 },
           radius: 8,
-          landmarks: ["broken stone archway", "ancient well", "toppled statue"],
+          landmarks: motif.landmarks.slice(0, 4),
           ambientDensity: 0.9,
-          mood: "mysterious",
+          mood: motif.label,
         },
       ],
-      globalAmbient: ["pine tree", "ancient tree", "bush", "mossy boulder"],
-      interactive: ["ancient well", "wooden supply crate", "glowing moss patches"],
+      globalAmbient: [...motif.ambient],
+      interactive: [...motif.interactive],
     },
     null,
     2,

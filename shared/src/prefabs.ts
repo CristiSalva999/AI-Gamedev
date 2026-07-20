@@ -31,7 +31,9 @@ export type PrefabKind =
   | "track_checkpoint"
   | "street_lamp"
   | "grandstand"
-  | "cone_marker";
+  | "cone_marker"
+  | "archery_target"
+  | "hay_bale";
 
 export interface MaterialHint {
   family: "bark" | "stone" | "foliage" | "metal" | "wood" | "asphalt" | "emissive" | "paint";
@@ -103,13 +105,17 @@ export function prefabForBrief(brief: string): PrefabKind {
   if (/\b(race car|arcade car|player car|sportscar|sports car|kart)\b/.test(t)) {
     return "race_car";
   }
-  if (/\b(barrier|guardrail|rail)\b/.test(t)) return "track_barrier";
+  if (/\b(barrier|guardrail|rail)\b/.test(t) && !/\bhay\b/.test(t)) return "track_barrier";
   if (/\b(checkpoint|gate marker|start finish|start\/finish)\b/.test(t)) {
     return "track_checkpoint";
   }
   if (/\b(street lamp|lamp post|floodlight)\b/.test(t)) return "street_lamp";
   if (/\b(grandstand|bleacher|tribune)\b/.test(t)) return "grandstand";
   if (/\b(traffic cone|cone marker|marker cone)\b/.test(t)) return "cone_marker";
+  if (/\b(archery\s*target|bullseye|target\s*butt)\b/.test(t)) return "archery_target";
+  if (/\b(hay\s*bale|straw\s*bale)\b/.test(t)) return "hay_bale";
+  if (/\b(quiver|practice\s*post|timber\s*post|watch\s*post)\b/.test(t)) return "stone_pillar";
+  if (/\b(training\s*dummy|straw\s*dummy|scarecrow)\b/.test(t)) return "statue";
   if (/\b(hollow|gnarled).*\btree|\btree.*hollow\b/.test(t)) return "hollow_tree";
   if (/\b(pine|fir|evergreen)\b/.test(t)) return "pine_tree";
   if (/\b(tree|oak|willow|canopy)\b/.test(t)) return "tree";
@@ -117,10 +123,10 @@ export function prefabForBrief(brief: string): PrefabKind {
   if (/\b(pillar|column)\b/.test(t) && /\b(fallen|toppled|broken)\b/.test(t)) {
     return "fallen_column";
   }
-  if (/\b(pillar|column)\b/.test(t)) return "stone_pillar";
+  if (/\b(pillar|column|post)\b/.test(t)) return "stone_pillar";
   if (/\b(wall|ruin wall|ruined wall)\b/.test(t)) return "ruin_wall";
   if (/\b(well|fountain)\b/.test(t)) return "ancient_well";
-  if (/\b(statue|monument|idol)\b/.test(t)) return "statue";
+  if (/\b(statue|monument|idol|dummy)\b/.test(t)) return "statue";
   if (/\b(moss)\b/.test(t)) return "moss_patch";
   if (/\b(mushroom|fungus|toadstool)\b/.test(t)) return "mushroom";
   if (/\b(crate|chest|supply)\b/.test(t)) return "supply_crate";
@@ -900,6 +906,75 @@ const PREFABS: Record<PrefabKind, PrefabFactory> = {
         color: "#f5f5f5",
         size: { x: 0.42, y: 0.1, z: 0.42 },
         offset: { x: 0, y: 0.35, z: 0 },
+      },
+    ],
+  }),
+
+  archery_target: () => ({
+    kind: "archery_target",
+    shape: "cylinder",
+    color: "#f5f5f5",
+    size: { x: 1.4, y: 1.6, z: 0.35 },
+    roughness: 0.7,
+    metalness: 0.02,
+    parts: [
+      {
+        shape: "cylinder",
+        color: WOOD,
+        size: { x: 0.12, y: 1.1, z: 0.12 },
+        offset: { x: 0, y: 0.55, z: 0 },
+        roughness: 0.9,
+        materialHint: { family: "wood" },
+      },
+      {
+        shape: "cylinder",
+        color: "#f5f5f5",
+        size: { x: 1.2, y: 0.12, z: 1.2 },
+        offset: { x: 0, y: 1.15, z: 0.05 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 },
+        roughness: 0.65,
+      },
+      {
+        shape: "cylinder",
+        color: "#e74c3c",
+        size: { x: 0.7, y: 0.13, z: 0.7 },
+        offset: { x: 0, y: 1.15, z: 0.08 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 },
+        roughness: 0.6,
+      },
+      {
+        shape: "cylinder",
+        color: "#f1c40f",
+        size: { x: 0.28, y: 0.14, z: 0.28 },
+        offset: { x: 0, y: 1.15, z: 0.1 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 },
+        roughness: 0.55,
+      },
+    ],
+  }),
+
+  hay_bale: () => ({
+    kind: "hay_bale",
+    shape: "box",
+    color: "#c4a574",
+    size: { x: 1.4, y: 0.85, z: 0.9 },
+    roughness: 0.95,
+    metalness: 0,
+    parts: [
+      {
+        shape: "box",
+        color: "#c4a574",
+        size: { x: 1.3, y: 0.75, z: 0.8 },
+        offset: { x: 0, y: 0.38, z: 0 },
+        roughness: 0.95,
+        materialHint: { family: "foliage" },
+      },
+      {
+        shape: "box",
+        color: "#a88854",
+        size: { x: 1.32, y: 0.08, z: 0.82 },
+        offset: { x: 0, y: 0.72, z: 0 },
+        roughness: 0.9,
       },
     ],
   }),
