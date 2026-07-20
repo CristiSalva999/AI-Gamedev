@@ -80,6 +80,34 @@ export function ringPosition(index: number, total: number): { x: number; y: numb
 }
 
 /**
+ * Places hunt targets in a playable ring around the player spawn — not on the
+ * far world rim — so "shoot the dwarfs" is immediately fair after a steer.
+ */
+export function huntPositionsNearSpawn(
+  spawn: { x: number; z: number },
+  count: number,
+  worldRadius: number,
+): Array<{ x: number; y: number; z: number }> {
+  const n = Math.max(1, count);
+  const maxR = Math.max(4, worldRadius * 0.55);
+  const minR = Math.min(5, maxR * 0.55);
+  const positions: Array<{ x: number; y: number; z: number }> = [];
+  for (let i = 0; i < n; i++) {
+    const angle = (i / n) * Math.PI * 2 + 0.35;
+    const dist = minR + ((i % 3) / 2) * (maxR - minR);
+    const x = spawn.x + Math.cos(angle) * dist;
+    const z = spawn.z + Math.sin(angle) * dist;
+    const clamp = worldRadius * 0.85;
+    positions.push({
+      x: Number(Math.max(-clamp, Math.min(clamp, x)).toFixed(2)),
+      y: 0,
+      z: Number(Math.max(-clamp, Math.min(clamp, z)).toFixed(2)),
+    });
+  }
+  return positions;
+}
+
+/**
  * Builds a full level placement list: landmarks first, then ambient fillers
  * (trees, path stones, rubble) so forest/ruins prompts feel explorable.
  */

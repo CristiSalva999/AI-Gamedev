@@ -22,6 +22,7 @@ import {
   animationFor,
   behaviorFor,
   deriveTitle,
+  huntPositionsNearSpawn,
   isEnemyBrief,
   moodLabel,
   planLevelPlacements,
@@ -468,6 +469,24 @@ export async function* runSteer(
     };
     const context = contextFromBlueprint(blueprint);
     const briefs = hunt.briefs;
+    const worldRadius = blueprint.environment.worldRadius ?? 14;
+    const spawn = blueprint.player.spawn;
+    const positions = huntPositionsNearSpawn(
+      { x: spawn.x, z: spawn.z },
+      hunt.count,
+      worldRadius,
+    );
+
+    // Replace prior hunt targets and retire orb collectibles so the session is a hunt.
+    blueprint.entities = blueprint.entities.filter((e) => e.role !== "enemy");
+    for (const entity of blueprint.entities) {
+      if (isOrbCollectible(entity)) {
+        entity.interactive = false;
+        entity.role = "ambient";
+        entity.interactHint = undefined;
+      }
+    }
+
     for (let i = 0; i < hunt.count; i++) {
       const brief = briefs[i % briefs.length];
       const { asset } = await deps.assetGenerator.generate(brief, context);
@@ -475,17 +494,12 @@ export async function* runSteer(
       const behavior = behaviorFor("enemy", false, index, brief);
       const clip = animationFor(behavior, asset.id);
       if (clip) blueprint.animations[clip.id] = clip;
-      const pos = ringPosition(index + 3, hunt.count + 6);
-      const radius = blueprint.environment.worldRadius ?? 14;
+      const pos = positions[i] ?? positions[0];
       blueprint.entities.push({
         id: asset.id,
         name: asset.name,
         spec: asset.spec,
-        position: {
-          x: Number((pos.x * (radius / 7)).toFixed(2)),
-          y: 0,
-          z: Number((pos.z * (radius / 7)).toFixed(2)),
-        },
+        position: { x: pos.x, y: 0, z: pos.z },
         behavior,
         animation: clip,
         interactive: false,
@@ -496,32 +510,39 @@ export async function* runSteer(
         kitId: asset.kitId,
       });
     }
-    // Switch / ensure eliminate objective so Space-fire wins the hunt.
-    const target = Math.max(
-      hunt.count,
-      blueprint.entities.filter((e) => e.role === "enemy").length,
-    );
+
+    const target = blueprint.entities.filter((e) => e.role === "enemy").length;
     if (blueprint.runtime) {
-      const existing = blueprint.runtime.objectives.find((o) => o.type === "eliminate");
-      if (existing) {
-        existing.target = Math.max(existing.target, target);
-        existing.label = `Shoot ${existing.target} dwarfs`;
-      } else {
-        blueprint.runtime.objectives = [
-          {
-            id: "obj_eliminate",
-            label: `Shoot ${target} dwarfs`,
-            type: "eliminate",
-            target,
-            progress: 0,
-            rewardScore: 200,
-          },
-          ...blueprint.runtime.objectives.map((o) =>
-            o.type === "collect" ? { ...o, optional: true } : o,
-          ),
-        ];
-      }
-      blueprint.runtime.features = { ...blueprint.runtime.features, fire: true, reload: true };
+      const survive = blueprint.runtime.objectives.find((o) => o.type === "survive");
+      blueprint.runtime.objectives = [
+        {
+          id: "obj_eliminate",
+          label: `Shoot ${target} dwarfs`,
+          type: "eliminate",
+          target,
+          progress: 0,
+          rewardScore: 200,
+        },
+        ...(survive
+          ? [{ ...survive, optional: true as const }]
+          : [
+              {
+                id: "obj_survive",
+                label: "Stay alive",
+                type: "survive" as const,
+                target: 1,
+                progress: 0,
+                optional: true,
+              },
+            ]),
+      ];
+      blueprint.runtime.features = {
+        ...blueprint.runtime.features,
+        fire: true,
+        reload: true,
+        aim: true,
+        interact: false,
+      };
       blueprint.runtime.scoring = {
         ...blueprint.runtime.scoring,
         killBonus: Math.max(blueprint.runtime.scoring.killBonus, 150),
@@ -535,31 +556,36 @@ export async function* runSteer(
         objectivePing: `Shoot ${target} dwarfs`,
         winText: `Victory — cleared ${target} dwarf raiders`,
       };
-      if (!blueprint.runtime.combat) {
-        blueprint.runtime.combat = {
-          fireCooldownSec: 0.45,
-          reloadSec: 0.8,
-          damagePerShot: 18,
-          spread: 0.04,
-          autoReload: true,
-        };
-      }
-      if (blueprint.runtime.player.maxAmmo <= 0) {
-        blueprint.runtime.player = {
-          ...blueprint.runtime.player,
-          ammo: 12,
-          maxAmmo: 12,
-        };
-      }
+      blueprint.runtime.combat = {
+        ...(blueprint.runtime.combat ?? {}),
+        fireCooldownSec: 0.35,
+        reloadSec: 0.7,
+        damagePerShot: 34,
+        spread: 0.02,
+        autoReload: true,
+      };
+      blueprint.runtime.player = {
+        ...blueprint.runtime.player,
+        ammo: Math.max(blueprint.runtime.player.ammo, 30),
+        maxAmmo: Math.max(blueprint.runtime.player.maxAmmo, 30),
+      };
     }
-    if (!blueprint.controls || blueprint.controls.scheme !== "fps") {
-      blueprint.controls = controlProfileFor("fps");
+    if (blueprint.design?.systems) {
+      blueprint.design.systems = {
+        ...blueprint.design.systems,
+        objectives: [`Shoot ${target} dwarfs`],
+        winCondition: `Eliminate ${target} dwarf raiders`,
+        collectibleGoal: 0,
+        controlScheme: "fps",
+      };
     }
+    blueprint.controls = controlProfileFor("fps");
+    blueprint.player.speed = Math.max(blueprint.player.speed, 7.5);
     blueprint.updatedAt = Date.now();
     yield {
       type: "sneak-peek",
       stage: "assets",
-      note: `Hunt ready — ${hunt.count} dwarfs on the grounds. WASD move, Space to shoot arrows.`,
+      note: `Hunt ready — ${hunt.count} dwarfs near you. WASD move, ←→ turn, Space to shoot.`,
       blueprint: clone(blueprint),
     };
     yield { type: "stage-complete", stage: "assets" };
@@ -567,8 +593,10 @@ export async function* runSteer(
       type: "message",
       role: "assistant",
       content:
-        `Updated "${blueprint.gameTitle}" into a dwarf archery hunt: shoot the raiders with Space. ` +
-        `Objective: eliminate ${target}.`,
+        `Reworked "${blueprint.gameTitle}" into a playable dwarf archery hunt: ` +
+        `${target} raiders spawn around you (not map corners). ` +
+        `Use First person or Scene camera, WASD to move, ←→/Q E to turn, Space to shoot. ` +
+        `Objective: eliminate ${target} — energy-orb goals removed.`,
     };
     yield { type: "done", blueprint: clone(blueprint) };
     return;
@@ -816,7 +844,7 @@ function matchSpeed(text: string): { delta: number } | null {
  * either an explicit "storyline: ..." prefix or a "change/make the story ..."
  * instruction so follow-ups can iterate on narrative, not just visuals.
  */
-/** Steer phrases like "make me shoot dwarfs" / "update to archery hunt". */
+/** Steer phrases like "make me shoot dwarfs" / "fix the archery game". */
 function matchArcheryHuntSteer(
   message: string,
 ): { count: number; briefs: string[] } | null {
@@ -825,8 +853,10 @@ function matchArcheryHuntSteer(
     (/\b(shoot|kill|hunt|fight|eliminate)\b/.test(m) &&
       /\b(dwarf|dwarves|dwarfs|enemy|enemies|raider)\b/.test(m)) ||
     (/\b(dwarf|dwarves|dwarfs)\b/.test(m) &&
-      /\b(archery|bow|arrow|update|make|want|play)\b/.test(m)) ||
-    /\barchery\b/.test(m) && /\b(dwarf|dwarves|hunt|raid)\b/.test(m);
+      /\b(archery|bow|arrow|update|make|want|play|fix)\b/.test(m)) ||
+    (/\barchery\b/.test(m) &&
+      /\b(dwarf|dwarves|dwarfs|hunt|raid|fix|shoot)\b/.test(m)) ||
+    (/\bfix\b/.test(m) && /\b(archery|dwarf|dwarfs|dwarves)\b/.test(m));
   if (!wantsHunt) return null;
   const n = m.match(/\b(\d+)\s*(dwarfs?|dwarves|enemies)\b/);
   const count = n ? Math.min(12, Math.max(3, Number(n[1]))) : 6;
@@ -834,6 +864,15 @@ function matchArcheryHuntSteer(
     count,
     briefs: ["dwarf raider", "dwarf scout", "dwarf berserker", "dwarf archer", "dwarf wanderer"],
   };
+}
+
+/** Energy-orb / loot props left over from the default shooter scaffold. */
+function isOrbCollectible(entity: BlueprintEntity): boolean {
+  const blob = `${entity.name} ${entity.interactHint ?? ""} ${entity.role ?? ""}`.toLowerCase();
+  return (
+    (entity.interactive === true || entity.role === "loot") &&
+    /\b(orb|energy|loot|crystal)\b/.test(blob)
+  );
 }
 
 function matchStoryEdit(message: string): string | null {

@@ -456,12 +456,16 @@ export function App(): JSX.Element {
             <>
               <div>
                 {blueprint.runtime
-                  ? `${blueprint.runtime.difficulty} · ${blueprint.runtime.objectives.map((o) => o.label).join(" · ")}`
+                  ? `${blueprint.runtime.difficulty} · ${primaryObjectiveLabel(blueprint)}`
                   : blueprint.pitch}
               </div>
               <div>
                 Click preview · {blueprint.controls?.hudLine ?? "WASD move"}
-                {cameraView === "scene" ? " · drag to orbit" : " · first person"}
+                {cameraView === "first_person"
+                  ? " · first person (mouse look)"
+                  : blueprint.controls?.scheme === "fps"
+                    ? " · chase cam"
+                    : " · drag to orbit"}
               </div>
             </>
           ) : (
@@ -507,4 +511,14 @@ function StatusBadge({
 function shortModel(model: string): string {
   if (model.length <= 18) return model;
   return `${model.slice(0, 16)}…`;
+}
+
+/** Prefer the active required objective so steer leftovers don't clutter the HUD. */
+function primaryObjectiveLabel(blueprint: GameBlueprint): string {
+  const objectives = blueprint.runtime?.objectives ?? [];
+  const primary =
+    objectives.find((o) => !o.optional && o.progress < o.target) ??
+    objectives.find((o) => !o.optional) ??
+    objectives[0];
+  return primary?.label ?? blueprint.pitch;
 }

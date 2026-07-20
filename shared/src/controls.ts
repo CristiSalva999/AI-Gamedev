@@ -13,6 +13,8 @@ export type ControlAction =
   | "moveBack"
   | "moveLeft"
   | "moveRight"
+  | "turnLeft"
+  | "turnRight"
   | "interact"
   | "jump"
   | "sprint"
@@ -89,19 +91,19 @@ export function controlProfileFor(scheme: ControlScheme): ControlProfile {
         scheme,
         label: "Shooter",
         bindings: [
-          { action: "moveForward", keys: ["KeyW", "ArrowUp"], label: "W", hint: "Move forward" },
-          { action: "moveBack", keys: ["KeyS", "ArrowDown"], label: "S", hint: "Move back" },
-          { action: "moveLeft", keys: ["KeyA", "ArrowLeft"], label: "A", hint: "Strafe left" },
-          { action: "moveRight", keys: ["KeyD", "ArrowRight"], label: "D", hint: "Strafe right" },
+          { action: "moveForward", keys: ["KeyW"], label: "W", hint: "Move forward" },
+          { action: "moveBack", keys: ["KeyS"], label: "S", hint: "Move back" },
+          { action: "moveLeft", keys: ["KeyA"], label: "A", hint: "Strafe left" },
+          { action: "moveRight", keys: ["KeyD"], label: "D", hint: "Strafe right" },
+          { action: "turnLeft", keys: ["ArrowLeft", "KeyQ"], label: "←/Q", hint: "Turn left" },
+          { action: "turnRight", keys: ["ArrowRight", "KeyE"], label: "→/E", hint: "Turn right" },
           { action: "fire", keys: ["Space", "Mouse0"], label: "Space", hint: "Fire" },
           { action: "aim", keys: ["Mouse2", "ControlLeft"], label: "Ctrl", hint: "Aim / ADS" },
           { action: "reload", keys: ["KeyR"], label: "R", hint: "Reload" },
           { action: "sprint", keys: ["ShiftLeft", "ShiftRight"], label: "Shift", hint: "Sprint" },
           { action: "crouch", keys: ["KeyC"], label: "C", hint: "Crouch" },
-          { action: "interact", keys: ["KeyE"], label: "E", hint: "Interact" },
-          { action: "ability", keys: ["KeyQ"], label: "Q", hint: "Ability" },
         ],
-        hudLine: "WASD move · Space fire · R reload · Shift sprint · Ctrl aim · E interact · C crouch",
+        hudLine: "WASD move · ←→/Q E turn · mouse look in FP · Space fire · R reload · Shift sprint",
       };
     case "twin_stick":
       return {

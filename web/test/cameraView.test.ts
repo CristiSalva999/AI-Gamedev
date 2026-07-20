@@ -38,7 +38,7 @@ describe("computePreviewCameraPose", () => {
     expect(pose.target.y).toBeCloseTo(1.8, 2);
   });
 
-  it("uses chase camera behind the player for scene + fps", () => {
+  it("uses a tight chase camera for scene + fps without orbit fight", () => {
     const yaw = Math.PI / 2; // +X side
     const pose = computePreviewCameraPose({
       view: "scene",
@@ -49,9 +49,9 @@ describe("computePreviewCameraPose", () => {
       playerYaw: yaw,
     });
 
-    expect(pose.orbitEnabled).toBe(true);
+    expect(pose.orbitEnabled).toBe(false);
     expect(pose.camera).not.toBeNull();
-    expect(pose.camera!.x).toBeCloseTo(6, 2);
-    expect(pose.camera!.y).toBeCloseTo(4.2, 2);
+    expect(pose.camera!.x).toBeCloseTo(4.2, 2);
+    expect(pose.camera!.y).toBeCloseTo(3.4, 2);
   });
 });

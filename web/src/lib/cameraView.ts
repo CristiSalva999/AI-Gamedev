@@ -79,18 +79,24 @@ export function computePreviewCameraPose(input: CameraPoseInput): CameraPoseResu
     };
   }
 
-  const back = scheme === "drive" ? 8 : 6;
-  const height = scheme === "drive" ? 4.5 : 3.2;
+  // Over-the-shoulder chase for shooters; slightly farther / higher for cars.
+  const back = scheme === "drive" ? 8 : 4.2;
+  const height = scheme === "drive" ? 4.5 : 2.4;
   return {
-    target,
+    target: {
+      x: playerX - Math.sin(playerYaw) * 2.5,
+      y: playerY + 1.35,
+      z: playerZ - Math.cos(playerYaw) * 2.5,
+    },
     camera: {
       x: playerX + Math.sin(playerYaw) * back,
       y: playerY + height,
       z: playerZ + Math.cos(playerYaw) * back,
     },
-    orbitEnabled: true,
+    // Orbit drag fights chase aiming — keep it off for fps scene mode.
+    orbitEnabled: scheme === "drive",
     hidePlayerMesh: false,
-    targetFollow,
-    cameraFollow: 0.06,
+    targetFollow: scheme === "fps" ? 0.18 : targetFollow,
+    cameraFollow: scheme === "fps" ? 0.14 : 0.06,
   };
 }

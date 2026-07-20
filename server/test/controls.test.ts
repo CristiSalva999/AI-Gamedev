@@ -21,11 +21,13 @@ describe("control profiles", () => {
     expect(drive.hudLine.toLowerCase()).toContain("handbrake");
   });
 
-  it("gives shooters fire/reload distinct from exploration interact", () => {
+  it("gives shooters fire/reload and turn keys for aimable archery", () => {
     const fps = controlProfileFor("fps");
     expect(fps.bindings.find((b) => b.action === "fire")?.keys).toContain("Space");
     expect(fps.bindings.find((b) => b.action === "reload")?.keys).toContain("KeyR");
-    expect(fps.bindings.find((b) => b.action === "interact")?.keys).toContain("KeyE");
+    expect(fps.bindings.find((b) => b.action === "turnLeft")?.keys).toContain("ArrowLeft");
+    expect(fps.bindings.find((b) => b.action === "turnRight")?.keys).toContain("ArrowRight");
+    expect(fps.hudLine.toLowerCase()).toContain("turn");
 
     const walk = controlProfileFor("walk");
     expect(walk.bindings.find((b) => b.action === "fire")).toBeUndefined();

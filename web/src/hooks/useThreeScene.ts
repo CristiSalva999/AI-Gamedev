@@ -127,6 +127,9 @@ export function useThreeScene(): ThreeScene {
   const sessionRef = useRef<GameSessionState | null>(null);
   /** Bumps on each setBlueprint so in-flight GLTF loads can be ignored. */
   const blueprintEpochRef = useRef(0);
+  /** Rebuild session when steer mutates runtime (same title/createdAt). */
+  const sessionEpochRef = useRef<string>("");
+  const schemeRef = useRef<string>("walk");
 
   useEffect(() => {
     const container = containerRef.current;
@@ -249,9 +252,26 @@ export function useThreeScene(): ThreeScene {
     playerLightRef.current = playerLight;
     scene.add(playerLight);
 
+    const lockTarget = () => renderer.domElement;
     const onPointerDown = () => {
       playFocusedRef.current = true;
       container.focus({ preventScroll: true });
+      // First-person shooters: lock pointer so mouse look aims arrows.
+      const el = lockTarget();
+      if (
+        cameraViewRef.current === "first_person" &&
+        controlProfileRef.current.scheme === "fps" &&
+        document.pointerLockElement !== el
+      ) {
+        el.requestPointerLock?.();
+      }
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (document.pointerLockElement !== lockTarget()) return;
+      if (cameraViewRef.current !== "first_person") return;
+      if (!playerRef.current) return;
+      const sensitivity = 0.0022;
+      playerRef.current.rotation.y -= event.movementX * sensitivity;
     };
     const onFocus = () => {
       playFocusedRef.current = true;
@@ -259,8 +279,12 @@ export function useThreeScene(): ThreeScene {
     const onBlur = () => {
       playFocusedRef.current = false;
       keysRef.current.clear();
+      if (document.pointerLockElement === lockTarget()) {
+        document.exitPointerLock?.();
+      }
     };
     container.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("pointermove", onPointerMove);
     container.addEventListener("focus", onFocus);
     container.addEventListener("blur", onBlur);
 
@@ -416,25 +440,52 @@ export function useThreeScene(): ThreeScene {
           crouchingRef.current = isActionDown(profile, "crouch", keys);
           const axisX = actionAxis(profile, "moveRight", "moveLeft", keys);
           const axisZ = actionAxis(profile, "moveBack", "moveForward", keys);
+          // Positive turnRight decreases yaw so the view rotates clockwise (look right).
+          const turn =
+            actionAxis(profile, "turnRight", "turnLeft", keys) *
+            turnSpeedRef.current *
+            (scheme === "fps" ? 1.55 : 1) *
+            delta;
+          if (turn !== 0) {
+            playerRef.current.rotation.y -= turn;
+          }
           moving = axisX !== 0 || axisZ !== 0;
           if (moving) {
             const len = Math.hypot(axisX, axisZ);
             const mul = (sprint ? 1.55 : 1) * (crouchingRef.current ? 0.55 : 1);
             const step = (speedRef.current * mul * delta) / len;
+            let dx: number;
+            let dz: number;
+            if (scheme === "fps") {
+              // Camera/facing-relative strafe — W always goes where you look.
+              const yaw = playerRef.current.rotation.y;
+              const sin = Math.sin(yaw);
+              const cos = Math.cos(yaw);
+              const forward = -axisZ;
+              const strafe = axisX;
+              dx = (-sin * forward + cos * strafe) * step;
+              dz = (-cos * forward - sin * strafe) * step;
+            } else {
+              dx = axisX * step;
+              dz = axisZ * step;
+            }
             const nextX = THREE.MathUtils.clamp(
-              playerRef.current.position.x + axisX * step,
+              playerRef.current.position.x + dx,
               -bound,
               bound,
             );
             const nextZ = THREE.MathUtils.clamp(
-              playerRef.current.position.z + axisZ * step,
+              playerRef.current.position.z + dz,
               -bound,
               bound,
             );
             if (!collides(nextX, nextZ, entities.children, 0.55)) {
               playerRef.current.position.x = nextX;
               playerRef.current.position.z = nextZ;
-              playerRef.current.rotation.y = Math.atan2(axisX, axisZ);
+              // Twin-stick / walk still face the move direction; fps keeps aim yaw.
+              if (scheme !== "fps") {
+                playerRef.current.rotation.y = Math.atan2(axisX, axisZ);
+              }
             }
           }
 
@@ -574,8 +625,12 @@ export function useThreeScene(): ThreeScene {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       container.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("pointermove", onPointerMove);
       container.removeEventListener("focus", onFocus);
       container.removeEventListener("blur", onBlur);
+      if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock?.();
+      }
       observer.disconnect();
       controls.dispose();
       renderer.dispose();
@@ -700,7 +755,12 @@ export function useThreeScene(): ThreeScene {
     rebuildGroundFromBlueprint(scene, blueprint, groundRef, accentGroundRef);
 
     const gameKey = `${blueprint.gameTitle}:${blueprint.createdAt}`;
-    if (activeGameKeyRef.current !== gameKey) {
+    const objectiveSig =
+      blueprint.runtime?.objectives.map((o) => `${o.id}:${o.type}:${o.target}`).join("|") ??
+      "none";
+    const sessionEpoch = `${blueprint.updatedAt}:${objectiveSig}`;
+    const isNewGame = activeGameKeyRef.current !== gameKey;
+    if (isNewGame) {
       activeGameKeyRef.current = gameKey;
       collectedRef.current.clear();
       checkpointsHitRef.current.clear();
@@ -708,17 +768,6 @@ export function useThreeScene(): ThreeScene {
       verticalVelRef.current = 0;
       jumpOffsetRef.current = 0;
       fireCooldownRef.current = 0;
-      if (blueprint.runtime) {
-        sessionRef.current = createSessionState(blueprint.runtime);
-        if (lootElRef.current) {
-          lootElRef.current.textContent = formatSessionHud(
-            sessionRef.current,
-            blueprint.runtime,
-          );
-        }
-      } else {
-        sessionRef.current = null;
-      }
       if (projectilesRef.current) {
         for (const child of [...projectilesRef.current.children]) {
           projectilesRef.current.remove(child);
@@ -730,7 +779,41 @@ export function useThreeScene(): ThreeScene {
         blueprint.player.spawn.y,
         blueprint.player.spawn.z,
       );
+      // Face into the arena so first arrows aren't aimed at the void.
+      player.rotation.y = Math.PI;
     }
+
+    // Steer keeps createdAt but rewrites objectives — rebuild the live HUD/session.
+    if (isNewGame || sessionEpochRef.current !== sessionEpoch) {
+      sessionEpochRef.current = sessionEpoch;
+      if (blueprint.runtime) {
+        sessionRef.current = createSessionState(blueprint.runtime);
+        if (lootElRef.current) {
+          lootElRef.current.textContent = formatSessionHud(
+            sessionRef.current,
+            blueprint.runtime,
+          );
+        }
+      } else {
+        sessionRef.current = null;
+      }
+      if (!isNewGame && projectilesRef.current) {
+        for (const child of [...projectilesRef.current.children]) {
+          projectilesRef.current.remove(child);
+          disposeObject3D(child);
+        }
+      }
+    }
+
+    // Shooters default to first person when the scheme flips to fps (steer/build).
+    if (profile.scheme === "fps" && schemeRef.current !== "fps") {
+      cameraViewRef.current = "first_person";
+      setCameraViewState("first_person");
+    } else if (isNewGame && profile.scheme === "fps") {
+      cameraViewRef.current = "first_person";
+      setCameraViewState("first_person");
+    }
+    schemeRef.current = profile.scheme;
   }, []);
 
   const setCameraView = useCallback((view: PreviewCameraView) => {
