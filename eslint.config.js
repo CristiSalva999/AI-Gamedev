@@ -11,7 +11,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
  */
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**"],
+    ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**", "scripts/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

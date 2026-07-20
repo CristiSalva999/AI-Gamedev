@@ -16,6 +16,7 @@ import {
   type PrimitiveShape,
 } from "@ai-gamedev/shared";
 import { generatePrompt } from "../prompts.js";
+import { matchAssetKit, materializeKitAsset } from "./assetKit.js";
 import { writeProceduralGlb } from "./glbWriter.js";
 import type { LLMClient } from "./llmClient.js";
 
@@ -119,6 +120,9 @@ export class MockBlenderAssetGenerator implements AssetGenerator {
     context: GameContext,
     options: { outputDir?: string; fidelity?: FidelityLevel } = {},
   ): Promise<AssetGenerationResult> {
+    const kitHit = await tryKitAsset(brief, context, options);
+    if (kitHit) return kitHit;
+
     const prompt = generatePrompt.modelGeneration(brief, context);
     const { text: blenderScript, source } = await this.llm.generate(prompt, {
       task: "modelGeneration",
@@ -191,6 +195,10 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
     context: GameContext,
     options: { outputDir?: string; fidelity?: FidelityLevel } = {},
   ): Promise<AssetGenerationResult> {
+    // Prefer curated CC0 bases over inventing geometry (faster + better looking).
+    const kitHit = await tryKitAsset(brief, context, options);
+    if (kitHit) return kitHit;
+
     const blender = await this.resolveBlender();
     if (!blender || !options.outputDir) {
       return this.fallback.generate(brief, context, options);
@@ -280,6 +288,39 @@ export function blenderMissingHint(configured = "blender"): string {
     `Install Blender or set BLENDER_BIN to the binary path (current: "${configured}"), ` +
     `then restart the server.`
   );
+}
+
+async function tryKitAsset(
+  brief: string,
+  context: GameContext,
+  options: { outputDir?: string; fidelity?: FidelityLevel },
+): Promise<AssetGenerationResult | null> {
+  const match = await matchAssetKit(brief);
+  if (!match) return null;
+  const fidelity = options.fidelity ?? "cinematic";
+  const spec = deriveSpec(brief, context, fidelity);
+  const id = `model_${slug(brief)}_${Date.now().toString(36)}`;
+  let assetSource: string | undefined = match.absolutePath;
+  if (options.outputDir) {
+    try {
+      assetSource = await materializeKitAsset(match, options.outputDir, id);
+    } catch {
+      return null;
+    }
+  }
+  return {
+    asset: {
+      id,
+      name: brief.trim() || "asset",
+      source: assetSource,
+      modelUrl: match.kitUrl,
+      kitId: match.entry.id,
+      spec,
+      createdAt: Date.now(),
+    },
+    blenderScript: `# kit:${match.entry.id} — CC0 base from server/asset-kit (${brief})`,
+    source: "kit",
+  };
 }
 
 /** Deterministic brief -> geometry mapping (pure, easily testable). */

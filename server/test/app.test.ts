@@ -102,9 +102,11 @@ describe("POST /api/generate-asset", () => {
       .send({ brief: "wooden crate" });
 
     expect(res.status).toBe(201);
-    expect(res.body.asset.spec.shape).toBe("box");
-    expect(res.body.asset.spec.color).toBe("#8b5a2b");
-    expect(res.body.blenderScript).toContain("import bpy");
+    // "wooden crate" hits the CC0 kit (planks) before procedural/Blender.
+    expect(res.body.source).toBe("kit");
+    expect(res.body.asset.kitId).toBe("planks");
+    expect(res.body.asset.modelUrl).toBe("/api/asset-kit/planks.glb");
+    expect(res.body.blenderScript).toContain("kit:planks");
 
     const ctx = await request(app).get("/api/context");
     expect(Object.keys(ctx.body.assets.models)).toHaveLength(1);

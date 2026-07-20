@@ -19,9 +19,11 @@ describe("formatStartupBanner", () => {
       },
       envFiles: [],
       webPort: 5173,
+      assetKitEntries: 39,
     });
 
     expect(banner).toContain("Open the app:   http://localhost:5173");
+    expect(banner).toContain("39 meshes ready");
     expect(banner).toContain("API (health):   http://localhost:3001/api/health");
     expect(banner).toContain("NOT FOUND → procedural GLB fallback");
     expect(banner).toContain("server/.env");

@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { loadEnvFiles } from "./loadEnv.js";
 import { HybridBlenderAssetGenerator } from "./services/assetGenerator.js";
+import { kitStats } from "./services/assetKit.js";
 import { FileContextStore } from "./services/contextStore.js";
 import { GamePackager } from "./services/gamePackager.js";
 import { GitWorkspaceService } from "./services/gitWorkspace.js";
@@ -22,9 +23,10 @@ async function main(): Promise<void> {
   const packager = new GamePackager({ git, gamesRoot: config.gamesDir });
   const projectStore = new ProjectStore(config.dataDir);
 
-  const [llmReachable, blender] = await Promise.all([
+  const [llmReachable, blender, kit] = await Promise.all([
     llm.ping(),
     assetGenerator.probeBlender(),
+    kitStats(),
   ]);
 
   // A small delay makes the streamed "sneak peeks" feel deliberate in the UI.
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
         blender,
         envFiles,
         webPort: 5173,
+        assetKitEntries: kit.entries,
       }),
     );
   });

@@ -23,6 +23,7 @@ import {
 import { runBuild, runSteer, type PipelineOptions } from "./pipeline/pipeline.js";
 import { generatePrompt, SYSTEM_PROMPT } from "./prompts.js";
 import type { AssetGenerator } from "./services/assetGenerator.js";
+import { assetKitRoot, kitStats } from "./services/assetKit.js";
 import type { ContextStore } from "./services/contextStore.js";
 import type { GamePackager } from "./services/gamePackager.js";
 import type { LLMClient } from "./services/llmClient.js";
@@ -62,7 +63,7 @@ export function createApp(deps: AppDependencies): Express {
   app.get(
     "/api/health",
     asyncHandler(async (_req, res) => {
-      const [reachable, blenderProbe] = await Promise.all([
+      const [reachable, blenderProbe, kit] = await Promise.all([
         llm.ping(),
         assetGenerator.probeBlender
           ? assetGenerator.probeBlender()
@@ -72,6 +73,7 @@ export function createApp(deps: AppDependencies): Express {
               path: undefined as string | undefined,
               hint: undefined as string | undefined,
             })),
+        kitStats(),
       ]);
       const body: HealthResponse = {
         status: "ok",
@@ -89,10 +91,33 @@ export function createApp(deps: AppDependencies): Express {
             ? {}
             : { hint: blenderProbe.hint }),
         },
+        assetKit: { entries: kit.entries },
       };
       res.json(body);
     }),
   );
+
+  // Vendored CC0 kit GLBs (preview without a packaged game).
+  app.use("/api/asset-kit", express.static(path.join(assetKitRoot(), "glb")));
+
+  // Per-game authored / kit-copied GLBs for the live viewport.
+  if (gamesDir) {
+    app.get(
+      "/api/games/:slug/assets/:file",
+      asyncHandler(async (req, res) => {
+        const slug = String(req.params.slug ?? "").replace(/[^a-z0-9_-]/gi, "");
+        const file = String(req.params.file ?? "").replace(/[^a-z0-9._-]/gi, "");
+        if (!slug || !file.endsWith(".glb")) {
+          res.status(400).json({ error: "Expected /api/games/:slug/assets/:file.glb" });
+          return;
+        }
+        const full = path.join(gamesDir, slug, "assets", file);
+        await access(full);
+        res.type("model/gltf-binary");
+        createReadStream(full).pipe(res);
+      }),
+    );
+  }
 
   app.get(
     "/api/context",

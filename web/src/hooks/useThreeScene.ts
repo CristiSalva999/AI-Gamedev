@@ -26,6 +26,7 @@ import {
   type LightingMood,
   type TerrainSpec,
 } from "@ai-gamedev/shared";
+import { loadGltfClone } from "../lib/gltfCache.js";
 import { buildAssetMesh, disposeObject3D } from "../lib/three-helpers.js";
 import { buildTerrainMesh } from "../lib/terrainMesh.js";
 
@@ -108,6 +109,8 @@ export function useThreeScene(): ThreeScene {
   const crouchingRef = useRef(false);
   const runtimeRef = useRef<GameRuntimeSpec | null>(null);
   const sessionRef = useRef<GameSessionState | null>(null);
+  /** Bumps on each setBlueprint so in-flight GLTF loads can be ignored. */
+  const blueprintEpochRef = useRef(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -551,6 +554,7 @@ export function useThreeScene(): ThreeScene {
     const player = playerRef.current;
     if (!scene || !group || !player) return;
 
+    const epoch = ++blueprintEpochRef.current;
     const bound = blueprint.environment.worldRadius ?? DEFAULT_BOUND;
     boundRef.current = bound;
 
@@ -575,12 +579,15 @@ export function useThreeScene(): ThreeScene {
     }
 
     for (const entity of blueprint.entities) {
-      const root = buildAssetMesh(entity.spec);
+      // Group host so we can swap procedural placeholders for kit/Blender GLBs.
+      const root = new THREE.Group();
+      const placeholder = buildAssetMesh(entity.spec);
+      root.add(placeholder);
       const baseY = entity.position.y ?? 0;
       root.position.set(entity.position.x, baseY, entity.position.z);
       if (entity.rotationY) root.rotation.y = entity.rotationY;
       const footprint =
-        (root.userData.footprint as number | undefined) ??
+        (placeholder.userData.footprint as number | undefined) ??
         Math.max(entity.spec.size.x, entity.spec.size.z, 0.8) * 0.45;
       root.userData = {
         behavior: entity.behavior,
@@ -601,6 +608,27 @@ export function useThreeScene(): ThreeScene {
       } satisfies EntityUserData;
       if (root.userData.collected && entity.role === "loot") root.visible = false;
       group.add(root);
+
+      if (entity.modelUrl) {
+        const url = entity.modelUrl;
+        void loadGltfClone(url)
+          .then((mesh) => {
+            if (blueprintEpochRef.current !== epoch || !root.parent) {
+              disposeObject3D(mesh);
+              return;
+            }
+            for (const child of [...root.children]) {
+              root.remove(child);
+              disposeObject3D(child);
+            }
+            root.add(mesh);
+            const fp = mesh.userData.footprint as number | undefined;
+            if (fp) root.userData.footprint = fp;
+          })
+          .catch(() => {
+            // Keep procedural placeholder if the GLB fails to load.
+          });
+      }
     }
 
     speedRef.current = blueprint.player.speed;

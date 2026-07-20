@@ -11,11 +11,14 @@ export interface StartupBannerInput {
   blender: BlenderProbeResult;
   envFiles: string[];
   webPort?: number;
+  /** Number of vendored CC0 kit meshes. */
+  assetKitEntries?: number;
 }
 
 export function formatStartupBanner(input: StartupBannerInput): string {
   const webPort = input.webPort ?? 5173;
   const { config, llmReachable, blender, envFiles } = input;
+  const kitEntries = input.assetKitEntries ?? 0;
   const lines: string[] = [
     "",
     "════════════════════════════════════════════════════════════",
@@ -47,6 +50,11 @@ export function formatStartupBanner(input: StartupBannerInput): string {
   }
 
   lines.push(
+    "",
+    "  Asset kit (CC0 Kenney bases)",
+    kitEntries > 0
+      ? `    status:    ${kitEntries} meshes ready (matched before Blender/procedural)`
+      : "    status:    missing — run npm run assets:sync",
     "",
     "  Data",
     `    games:     ${config.gamesDir}`,

@@ -225,6 +225,7 @@ export async function* runBuild(
   });
 
   let blenderAuthored = 0;
+  let kitAuthored = 0;
   for (let i = 0; i < placements.length; i++) {
     const planned = placements[i];
     const { asset, source: assetSource } = await deps.assetGenerator.generate(
@@ -236,6 +237,7 @@ export async function* runBuild(
       },
     );
     if (assetSource === "blender") blenderAuthored++;
+    if (assetSource === "kit") kitAuthored++;
     const behavior = behaviorFor(planned.role, planned.interactive, i, planned.brief);
     const entity: BlueprintEntity = {
       id: asset.id,
@@ -247,6 +249,11 @@ export async function* runBuild(
       interactive: planned.interactive,
       role: planned.role,
       interactHint: planned.interactHint,
+      // Prefer per-game asset URL once packaged; kit URL works immediately in preview.
+      modelUrl: assetOutputDir
+        ? `/api/games/${slug}/assets/${asset.id}.glb`
+        : asset.modelUrl,
+      kitId: asset.kitId,
     };
     blueprint.entities.push(entity);
     blueprint.updatedAt = Date.now();
@@ -262,7 +269,9 @@ export async function* runBuild(
         type: "sneak-peek",
         stage: "assets",
         note: isLandmark
-          ? `Sculpted "${asset.name}" → ${prefabLabel} (${partCount} parts, ${fidelity})${planned.interactive ? " · interactive" : ""}.`
+          ? assetSource === "kit"
+            ? `Placed kit base "${asset.kitId}" for "${asset.name}" (CC0)${planned.interactive ? " · interactive" : ""}.`
+            : `Sculpted "${asset.name}" → ${prefabLabel} (${partCount} parts, ${fidelity})${planned.interactive ? " · interactive" : ""}.`
           : `Populated the world with ${blueprint.entities.length} detailed set pieces.`,
         blueprint: clone(blueprint),
       };
@@ -272,10 +281,16 @@ export async function* runBuild(
   yield {
     type: "message",
     role: "assistant",
-    content:
-      blenderAuthored > 0
-        ? `Authored ${blenderAuthored}/${placements.length} assets with Blender (headless .glb export).`
-        : `Generated ${placements.length} assets procedurally. Install Blender on the machine running the server (or set BLENDER_BIN) to author meshes with Blender — health shows the current mode.`,
+    content: [
+      kitAuthored > 0 ? `${kitAuthored} from CC0 asset kit` : null,
+      blenderAuthored > 0 ? `${blenderAuthored} authored with Blender` : null,
+      placements.length - kitAuthored - blenderAuthored > 0
+        ? `${placements.length - kitAuthored - blenderAuthored} procedural`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+      .replace(/^/, `Assets ready (${placements.length}): `) + ".",
   };
   yield { type: "stage-complete", stage: "assets" };
 

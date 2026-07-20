@@ -21,6 +21,9 @@ npm-debug.log*
 .env.local
 .env.*.local
 
+# Temporary Kenney downloads from npm run assets:sync
+.tmp-asset-kit/
+
 # Editor / OS
 .DS_Store
 .vscode/

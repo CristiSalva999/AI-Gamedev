@@ -134,6 +134,10 @@ export interface Asset {
   source?: string;
   /** Procedural description used by the viewport to build a placeholder mesh. */
   spec: AssetSpec;
+  /** When set, mesh came from the vendored CC0 kit (`server/asset-kit`). */
+  kitId?: string;
+  /** Browser URL for the .glb (kit or per-game assets route). */
+  modelUrl?: string;
   createdAt: number;
 }
 
@@ -282,6 +286,13 @@ export interface BlueprintEntity {
   role?: EntityRole;
   /** Short prompt shown when the player is near an interactive prop. */
   interactHint?: string;
+  /**
+   * Optional URL to a real .glb (vendored kit or packaged game asset).
+   * When set, the viewport prefers GLTFLoader over procedural `spec` meshes.
+   */
+  modelUrl?: string;
+  /** Kit entry id when the mesh came from the CC0 asset kit. */
+  kitId?: string;
 }
 
 export interface PlayerSpec {
@@ -408,7 +419,7 @@ export interface GenerateRequest {
   params?: Record<string, unknown>;
 }
 
-export type GenerationSource = "llm" | "mock" | "blender";
+export type GenerationSource = "llm" | "mock" | "blender" | "kit";
 
 export interface GenerateResponse {
   text: string;
@@ -442,6 +453,10 @@ export interface HealthResponse {
     path?: string;
     /** Actionable hint when Blender was not found. */
     hint?: string;
+  };
+  /** Vendored CC0 kit used as mesh bases when briefs match. */
+  assetKit?: {
+    entries: number;
   };
 }
 
