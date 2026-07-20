@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultContext } from "@ai-gamedev/shared";
 import {
+  blenderCandidatePaths,
   buildAssetBlenderScript,
   deriveSpec,
   MockBlenderAssetGenerator,
@@ -51,6 +52,30 @@ describe("MockBlenderAssetGenerator", () => {
     const a = await generator().generate("mystic gem", context);
     const b = await generator().generate("mystic gem", context);
     expect(a.asset.spec).toEqual(b.asset.spec);
+  });
+});
+
+describe("blenderCandidatePaths", () => {
+  it("always includes the configured binary first", async () => {
+    const paths = await blenderCandidatePaths("C:\\Tools\\blender.exe", {});
+    expect(paths[0]).toBe("C:\\Tools\\blender.exe");
+  });
+
+  it("probes Program Files Blender Foundation on Windows", async () => {
+    if (process.platform !== "win32") {
+      // Function still returns the configured bin on non-Windows.
+      const paths = await blenderCandidatePaths("blender", {
+        ProgramFiles: "C:\\Program Files",
+      });
+      expect(paths).toEqual(["blender"]);
+      return;
+    }
+    const paths = await blenderCandidatePaths("blender", {
+      ProgramFiles: process.env.ProgramFiles ?? "C:\\Program Files",
+    });
+    expect(paths[0]).toBe("blender");
+    // At least the Steam/flat fallback path is considered.
+    expect(paths.some((p) => /Blender\\blender\.exe$/i.test(p))).toBe(true);
   });
 });
 

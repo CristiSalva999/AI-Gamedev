@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -20,6 +20,40 @@ import { writeProceduralGlb } from "./glbWriter.js";
 import type { LLMClient } from "./llmClient.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Candidate Blender executables. On Windows the installer rarely adds
+ * `blender` to PATH, so we also probe the usual Program Files locations.
+ */
+export async function blenderCandidatePaths(
+  configured = process.env.BLENDER_BIN ?? "blender",
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+  const candidates = [configured];
+  if (process.platform === "win32") {
+    const roots = [
+      env["ProgramFiles"],
+      env["ProgramFiles(x86)"],
+      env.LOCALAPPDATA,
+    ].filter((v): v is string => Boolean(v));
+    for (const root of roots) {
+      const foundation = path.join(root, "Blender Foundation");
+      try {
+        const versions = await readdir(foundation);
+        // Prefer newest folder name first (Blender 4.5 > 4.0 > 3.6…).
+        for (const version of versions.sort().reverse()) {
+          candidates.push(path.join(foundation, version, "blender.exe"));
+        }
+      } catch {
+        // Directory missing — ignore.
+      }
+      // Steam / flat installs sometimes skip the versioned folder.
+      candidates.push(path.join(root, "Blender", "blender.exe"));
+    }
+  }
+  // Deduplicate while preserving order.
+  return [...new Set(candidates.filter(Boolean))];
+}
 
 export interface AssetGenerationResult {
   asset: Asset;
@@ -174,12 +208,20 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
 
   private async resolveBlender(): Promise<string | null> {
     if (this.blenderPath !== undefined) return this.blenderPath;
-    try {
-      await execFileAsync(this.blenderBin, ["--version"], { timeout: 5_000 });
-      this.blenderPath = this.blenderBin;
-    } catch {
-      this.blenderPath = null;
+    const candidates = await blenderCandidatePaths(this.blenderBin);
+    for (const candidate of candidates) {
+      try {
+        await execFileAsync(candidate, ["--version"], { timeout: 5_000 });
+        this.blenderPath = candidate;
+        if (candidate !== this.blenderBin) {
+          console.log(`[blender] resolved via install probe: ${candidate}`);
+        }
+        return this.blenderPath;
+      } catch {
+        // try next candidate
+      }
     }
+    this.blenderPath = null;
     return this.blenderPath;
   }
 }
