@@ -35,8 +35,11 @@ export async function blenderCandidatePaths(
       env["ProgramFiles"],
       env["ProgramFiles(x86)"],
       env.LOCALAPPDATA,
+      // Fallbacks when the parent shell did not forward ProgramFiles.
+      "C:\\Program Files",
+      "C:\\Program Files (x86)",
     ].filter((v): v is string => Boolean(v));
-    for (const root of roots) {
+    for (const root of [...new Set(roots)]) {
       const foundation = path.join(root, "Blender Foundation");
       try {
         const versions = await readdir(foundation);
@@ -72,8 +75,10 @@ export interface AssetGenerator {
     context: GameContext,
     options?: { outputDir?: string; fidelity?: FidelityLevel },
   ): Promise<AssetGenerationResult>;
-  /** Whether a real Blender binary is on PATH. */
+  /** Whether a real Blender binary is on PATH / configured. */
   blenderAvailable(): Promise<boolean>;
+  /** Optional diagnostics for startup logs and health. */
+  probeBlender?(): Promise<BlenderProbeResult>;
 }
 
 const SHAPE_KEYWORDS: Array<[PrimitiveShape, string[]]> = [
@@ -99,6 +104,14 @@ export class MockBlenderAssetGenerator implements AssetGenerator {
 
   async blenderAvailable(): Promise<boolean> {
     return false;
+  }
+
+  async probeBlender(): Promise<BlenderProbeResult> {
+    return {
+      available: false,
+      tried: [],
+      hint: "Using procedural mock generator (tests / offline).",
+    };
   }
 
   async generate(
@@ -134,12 +147,21 @@ export class MockBlenderAssetGenerator implements AssetGenerator {
   }
 }
 
+export interface BlenderProbeResult {
+  available: boolean;
+  path?: string;
+  /** Candidates that were tried (for startup / health diagnostics). */
+  tried: string[];
+  hint?: string;
+}
+
 /**
  * Prefer real Blender when `BLENDER_BIN` / `blender` is available; otherwise
  * fall through to procedural GLB generation (cloud-safe).
  */
 export class HybridBlenderAssetGenerator implements AssetGenerator {
   private blenderPath: string | null | undefined;
+  private lastProbe: BlenderProbeResult | undefined;
 
   constructor(
     private readonly llm: LLMClient,
@@ -150,6 +172,18 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
   async blenderAvailable(): Promise<boolean> {
     const resolved = await this.resolveBlender();
     return resolved !== null;
+  }
+
+  /** Full probe result for startup logs and `/api/health`. */
+  async probeBlender(): Promise<BlenderProbeResult> {
+    await this.resolveBlender();
+    return (
+      this.lastProbe ?? {
+        available: false,
+        tried: [],
+        hint: blenderMissingHint(this.blenderBin),
+      }
+    );
   }
 
   async generate(
@@ -211,19 +245,41 @@ export class HybridBlenderAssetGenerator implements AssetGenerator {
     const candidates = await blenderCandidatePaths(this.blenderBin);
     for (const candidate of candidates) {
       try {
-        await execFileAsync(candidate, ["--version"], { timeout: 5_000 });
+        // windowsHide avoids a flashing console; longer timeout for cold HDD starts.
+        await execFileAsync(candidate, ["--version"], {
+          timeout: 15_000,
+          windowsHide: true,
+        });
         this.blenderPath = candidate;
-        if (candidate !== this.blenderBin) {
-          console.log(`[blender] resolved via install probe: ${candidate}`);
-        }
+        this.lastProbe = { available: true, path: candidate, tried: candidates };
         return this.blenderPath;
       } catch {
         // try next candidate
       }
     }
     this.blenderPath = null;
+    this.lastProbe = {
+      available: false,
+      tried: candidates,
+      hint: blenderMissingHint(this.blenderBin),
+    };
     return this.blenderPath;
   }
+}
+
+/** Short, copy-pasteable guidance when Blender is missing from PATH / env. */
+export function blenderMissingHint(configured = "blender"): string {
+  if (process.platform === "win32") {
+    return (
+      `Create server/.env with one line: ` +
+      `BLENDER_BIN=C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe ` +
+      `then restart npm run dev. (Your blender.exe works in CMD but is not on PATH.)`
+    );
+  }
+  return (
+    `Install Blender or set BLENDER_BIN to the binary path (current: "${configured}"), ` +
+    `then restart the server.`
+  );
 }
 
 /** Deterministic brief -> geometry mapping (pure, easily testable). */

@@ -62,9 +62,16 @@ export function createApp(deps: AppDependencies): Express {
   app.get(
     "/api/health",
     asyncHandler(async (_req, res) => {
-      const [reachable, blenderOk] = await Promise.all([
+      const [reachable, blenderProbe] = await Promise.all([
         llm.ping(),
-        assetGenerator.blenderAvailable(),
+        assetGenerator.probeBlender
+          ? assetGenerator.probeBlender()
+          : assetGenerator.blenderAvailable().then((available) => ({
+              available,
+              tried: [] as string[],
+              path: undefined as string | undefined,
+              hint: undefined as string | undefined,
+            })),
       ]);
       const body: HealthResponse = {
         status: "ok",
@@ -75,8 +82,12 @@ export function createApp(deps: AppDependencies): Express {
           baseUrl: llm.baseUrl,
         },
         blender: {
-          available: blenderOk,
-          mode: blenderOk ? "blender" : "procedural",
+          available: blenderProbe.available,
+          mode: blenderProbe.available ? "blender" : "procedural",
+          ...(blenderProbe.path ? { path: blenderProbe.path } : {}),
+          ...(blenderProbe.available || !blenderProbe.hint
+            ? {}
+            : { hint: blenderProbe.hint }),
         },
       };
       res.json(body);

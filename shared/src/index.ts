@@ -438,6 +438,10 @@ export interface HealthResponse {
   blender: {
     available: boolean;
     mode: "blender" | "procedural";
+    /** Resolved blender.exe path when available. */
+    path?: string;
+    /** Actionable hint when Blender was not found. */
+    hint?: string;
   };
 }
 
