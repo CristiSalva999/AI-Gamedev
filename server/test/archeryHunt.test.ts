@@ -18,6 +18,17 @@ describe("archery dwarf hunt", () => {
     expect(isEnemyBrief("wooden supply crate")).toBe(false);
   });
 
+  it("places hunt targets near the spawn inside the walkable radius", () => {
+    const spawn = { x: 0, z: 8 };
+    const spots = huntPositionsNearSpawn(spawn, 6, 22);
+    expect(spots).toHaveLength(6);
+    for (const p of spots) {
+      const dist = Math.hypot(p.x - spawn.x, p.z - spawn.z);
+      expect(dist).toBeGreaterThan(4);
+      expect(dist).toBeLessThan(14);
+    }
+  });
+
   it("steers an existing build into a shootable dwarf hunt", async () => {
     const prompt = composeSetupPrompt({
       title: "dwarvy archery",

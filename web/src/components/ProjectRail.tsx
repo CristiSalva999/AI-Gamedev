@@ -16,13 +16,22 @@ export function ProjectRail({
   onDelete,
 }: ProjectRailProps): JSX.Element {
   return (
-    <nav className="rail">
+    <nav className="rail" aria-label="Projects">
+      <div className="rail-brand">
+        <span className="rail-mark" aria-hidden />
+        <div>
+          <div className="rail-brand-name">GameDev</div>
+          <div className="rail-brand-sub">Studio</div>
+        </div>
+      </div>
+
       <button type="button" className="rail-new" onClick={onNew}>
-        + New game
+        New game
       </button>
+
       <div className="rail-label">Projects</div>
       {projects.length === 0 ? (
-        <p className="rail-empty">No games yet.</p>
+        <p className="rail-empty">No games yet — start one.</p>
       ) : (
         <ul className="rail-list">
           {projects.map((project) => (

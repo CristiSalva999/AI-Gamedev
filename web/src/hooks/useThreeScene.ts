@@ -45,6 +45,11 @@ interface ThreeScene {
   /** Current preview camera mode (`scene` orbit/chase vs `first_person`). */
   cameraView: PreviewCameraView;
   setCameraView: (view: PreviewCameraView) => void;
+  /** Ground-grid helpers visible in the preview. */
+  helpersVisible: boolean;
+  setHelpersVisible: (visible: boolean) => void;
+  /** Focus the canvas so WASD / fire keys bind to the game. */
+  focusPreview: () => void;
 }
 
 interface EntityUserData {
@@ -85,6 +90,8 @@ export function useThreeScene(): ThreeScene {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [cameraView, setCameraViewState] = useState<PreviewCameraView>("scene");
   const cameraViewRef = useRef<PreviewCameraView>("scene");
+  const [helpersVisible, setHelpersVisibleState] = useState(true);
+  const helpersVisibleRef = useRef(true);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -203,10 +210,11 @@ export function useThreeScene(): ThreeScene {
     scene.add(sun);
 
     const bound = DEFAULT_BOUND;
-    const grid = new THREE.GridHelper(bound * 2, Math.floor(bound), 0x4a7a55, 0x2f5538);
+    const grid = new THREE.GridHelper(bound * 2, Math.floor(bound), 0x5a7a62, 0x3a5340);
     grid.position.y = 0.01;
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.35;
+    (grid.material as THREE.Material).opacity = 0.28;
+    grid.visible = helpersVisibleRef.current;
     gridRef.current = grid;
     scene.add(grid);
 
@@ -663,6 +671,7 @@ export function useThreeScene(): ThreeScene {
       bound,
       replaceGrid: (next) => {
         if (gridRef.current) scene.remove(gridRef.current);
+        next.visible = helpersVisibleRef.current;
         gridRef.current = next;
         scene.add(next);
       },
@@ -821,11 +830,27 @@ export function useThreeScene(): ThreeScene {
     setCameraViewState(view);
   }, []);
 
+  const setHelpersVisible = useCallback((visible: boolean) => {
+    helpersVisibleRef.current = visible;
+    setHelpersVisibleState(visible);
+    if (gridRef.current) gridRef.current.visible = visible;
+  }, []);
+
+  const focusPreview = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    playFocusedRef.current = true;
+  }, []);
+
   return {
     containerRef: containerRef as React.RefObject<HTMLDivElement>,
     setBlueprint,
     cameraView,
     setCameraView,
+    helpersVisible,
+    setHelpersVisible,
+    focusPreview,
   };
 }
 

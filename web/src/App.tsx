@@ -13,6 +13,12 @@ import { useThreeScene } from "./hooks/useThreeScene.js";
 import { ProjectRail } from "./components/ProjectRail.js";
 import { ScopeEditor } from "./components/ScopeEditor.js";
 import { SetupWizard } from "./components/SetupWizard.js";
+import { ViewportStudio } from "./components/ViewportStudio.js";
+import {
+  inspectorStats,
+  primaryObjectiveLabel,
+  steerSuggestionsFor,
+} from "./lib/studioChrome.js";
 
 type LineKind = "user" | "assistant" | "stage" | "peek" | "artifact" | "error";
 type View = "welcome" | "wizard" | "project";
@@ -27,15 +33,16 @@ interface ChatLine {
 
 let lineSeq = 0;
 
-const STEER_SUGGESTIONS = [
-  "make it night",
-  "add more crates",
-  "player faster",
-  "storyline: a lone explorer races the coming storm",
-];
-
 export function App(): JSX.Element {
-  const { containerRef, setBlueprint, cameraView, setCameraView } = useThreeScene();
+  const {
+    containerRef,
+    setBlueprint,
+    cameraView,
+    setCameraView,
+    helpersVisible,
+    setHelpersVisible,
+    focusPreview,
+  } = useThreeScene();
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [currentMeta, setCurrentMeta] = useState<ProjectMeta | null>(null);
@@ -51,9 +58,11 @@ export function App(): JSX.Element {
   const [blenderMode, setBlenderMode] = useState<"blender" | "procedural" | null>(null);
   const [assetKitEntries, setAssetKitEntries] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
+  const [legendVisible, setLegendVisible] = useState(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const viewportShellRef = useRef<HTMLElement | null>(null);
 
   const pushLine = useCallback((line: Omit<ChatLine, "id">) => {
     setLines((prev) => [...prev, { id: lineSeq++, ...line }]);
@@ -213,7 +222,11 @@ export function App(): JSX.Element {
 
   const handleDelete = useCallback(
     async (project: ProjectMeta) => {
-      if (!window.confirm(`Delete "${project.title}"? This removes its workspace and cannot be undone.`)) {
+      if (
+        !window.confirm(
+          `Delete "${project.title}"? This removes its workspace and cannot be undone.`,
+        )
+      ) {
         return;
       }
       try {
@@ -295,7 +308,28 @@ export function App(): JSX.Element {
     a.click();
   }, [manifest]);
 
-  const suggestions = useMemo(() => STEER_SUGGESTIONS, []);
+  const toggleFullscreen = useCallback(() => {
+    const shell = viewportShellRef.current;
+    if (!shell) return;
+    if (document.fullscreenElement === shell) {
+      void document.exitFullscreen();
+    } else {
+      void shell.requestFullscreen();
+    }
+  }, []);
+
+  const suggestions = useMemo(() => steerSuggestionsFor(blueprint), [blueprint]);
+  const stats = useMemo(() => inspectorStats(blueprint), [blueprint]);
+  const controlLine = useMemo(() => {
+    if (!blueprint) return null;
+    const cam =
+      cameraView === "first_person"
+        ? "first person · mouse look"
+        : blueprint.controls?.scheme === "fps"
+          ? "chase cam"
+          : "drag to orbit";
+    return `${blueprint.controls?.hudLine ?? "WASD move"} · ${cam}`;
+  }, [blueprint, cameraView]);
 
   return (
     <div className="layout">
@@ -309,7 +343,7 @@ export function App(): JSX.Element {
 
       <aside className="panel">
         <header className="brand">
-          <h1>AI GameDev</h1>
+          <h1>Build chat</h1>
           <StatusBadge
             reachable={llmReachable}
             model={model}
@@ -350,17 +384,16 @@ export function App(): JSX.Element {
           <SetupWizard onCreate={handleCreate} onCancel={() => setView("welcome")} />
         ) : view === "welcome" ? (
           <div className="welcome">
-            <h2>Start a new game project</h2>
+            <h2>Make a game you can play in minutes</h2>
             <p className="muted">
-              Answer a few questions and I&apos;ll build a playable game, then steer
-              it with follow-ups like &ldquo;make it night&rdquo; or
-              &ldquo;storyline: …&rdquo;.
+              Set the genre and world, then steer lighting, story, and combat from chat —
+              the preview updates live.
             </p>
             <button type="button" onClick={startNew} disabled={!ready}>
-              + New game
+              New game
             </button>
             {projects.length > 0 && (
-              <p className="muted small">…or pick a project on the left.</p>
+              <p className="muted small">Or open a project from the rail.</p>
             )}
           </div>
         ) : editingScope && currentMeta ? (
@@ -431,47 +464,27 @@ export function App(): JSX.Element {
         )}
       </aside>
 
-      <main className="viewport-wrap">
+      <main className="viewport-wrap" ref={viewportShellRef}>
         <div className="viewport" ref={containerRef} />
-        <div className="camera-toggle" role="group" aria-label="Camera mode">
-          <button
-            type="button"
-            className={cameraView === "scene" ? "active" : undefined}
-            onClick={() => setCameraView("scene")}
-            title="Orbit / chase scene camera"
-          >
-            Scene
-          </button>
-          <button
-            type="button"
-            className={cameraView === "first_person" ? "active" : undefined}
-            onClick={() => setCameraView("first_person")}
-            title="First-person eye camera"
-          >
-            First person
-          </button>
-        </div>
-        <div className="hud">
-          {blueprint ? (
-            <>
-              <div>
-                {blueprint.runtime
-                  ? `${blueprint.runtime.difficulty} · ${primaryObjectiveLabel(blueprint)}`
-                  : blueprint.pitch}
-              </div>
-              <div>
-                Click preview · {blueprint.controls?.hudLine ?? "WASD move"}
-                {cameraView === "first_person"
-                  ? " · first person (mouse look)"
-                  : blueprint.controls?.scheme === "fps"
-                    ? " · chase cam"
-                    : " · drag to orbit"}
-              </div>
-            </>
-          ) : (
-            "Your game preview will appear here as the build streams"
-          )}
-        </div>
+        <ViewportStudio
+          cameraView={cameraView}
+          onCameraView={setCameraView}
+          stats={stats}
+          helpersVisible={helpersVisible}
+          onToggleHelpers={() => setHelpersVisible(!helpersVisible)}
+          legendVisible={legendVisible}
+          onToggleLegend={() => setLegendVisible((v) => !v)}
+          controlLine={controlLine}
+          emptyHint="Your playable preview appears here as the build streams"
+          onFocusPreview={focusPreview}
+          onFullscreen={toggleFullscreen}
+        />
+        {/* Keep primary objective accessible to assistive tech even when strip is visual. */}
+        {blueprint ? (
+          <span className="sr-only">
+            Objective: {primaryObjectiveLabel(blueprint)}. Camera: {cameraView}.
+          </span>
+        ) : null}
       </main>
     </div>
   );
@@ -511,14 +524,4 @@ function StatusBadge({
 function shortModel(model: string): string {
   if (model.length <= 18) return model;
   return `${model.slice(0, 16)}…`;
-}
-
-/** Prefer the active required objective so steer leftovers don't clutter the HUD. */
-function primaryObjectiveLabel(blueprint: GameBlueprint): string {
-  const objectives = blueprint.runtime?.objectives ?? [];
-  const primary =
-    objectives.find((o) => !o.optional && o.progress < o.target) ??
-    objectives.find((o) => !o.optional) ??
-    objectives[0];
-  return primary?.label ?? blueprint.pitch;
 }
