@@ -35,7 +35,7 @@ const STEER_SUGGESTIONS = [
 ];
 
 export function App(): JSX.Element {
-  const { containerRef, setBlueprint } = useThreeScene();
+  const { containerRef, setBlueprint, cameraView, setCameraView } = useThreeScene();
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [currentMeta, setCurrentMeta] = useState<ProjectMeta | null>(null);
@@ -49,6 +49,7 @@ export function App(): JSX.Element {
   const [llmReachable, setLlmReachable] = useState<boolean | null>(null);
   const [model, setModel] = useState("");
   const [blenderMode, setBlenderMode] = useState<"blender" | "procedural" | null>(null);
+  const [assetKitEntries, setAssetKitEntries] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +80,7 @@ export function App(): JSX.Element {
         setLlmReachable(health.llm.reachable);
         setModel(health.llm.model);
         setBlenderMode(health.blender.mode);
+        setAssetKitEntries(health.assetKit?.entries ?? null);
         setProjects(list);
       } catch (err) {
         if (!cancelled) {
@@ -308,7 +310,12 @@ export function App(): JSX.Element {
       <aside className="panel">
         <header className="brand">
           <h1>AI GameDev</h1>
-          <StatusBadge reachable={llmReachable} model={model} blenderMode={blenderMode} />
+          <StatusBadge
+            reachable={llmReachable}
+            model={model}
+            blenderMode={blenderMode}
+            assetKitEntries={assetKitEntries}
+          />
         </header>
 
         {view === "project" && (
@@ -426,6 +433,24 @@ export function App(): JSX.Element {
 
       <main className="viewport-wrap">
         <div className="viewport" ref={containerRef} />
+        <div className="camera-toggle" role="group" aria-label="Camera mode">
+          <button
+            type="button"
+            className={cameraView === "scene" ? "active" : undefined}
+            onClick={() => setCameraView("scene")}
+            title="Orbit / chase scene camera"
+          >
+            Scene
+          </button>
+          <button
+            type="button"
+            className={cameraView === "first_person" ? "active" : undefined}
+            onClick={() => setCameraView("first_person")}
+            title="First-person eye camera"
+          >
+            First person
+          </button>
+        </div>
         <div className="hud">
           {blueprint ? (
             <>
@@ -435,7 +460,8 @@ export function App(): JSX.Element {
                   : blueprint.pitch}
               </div>
               <div>
-                Click preview · {blueprint.controls?.hudLine ?? "WASD move"} · drag to orbit
+                Click preview · {blueprint.controls?.hudLine ?? "WASD move"}
+                {cameraView === "scene" ? " · drag to orbit" : " · first person"}
               </div>
             </>
           ) : (
@@ -451,10 +477,12 @@ function StatusBadge({
   reachable,
   model,
   blenderMode,
+  assetKitEntries,
 }: {
   reachable: boolean | null;
   model: string;
   blenderMode: "blender" | "procedural" | null;
+  assetKitEntries: number | null;
 }): JSX.Element {
   const state = reachable === null ? "pending" : reachable ? "online" : "mock";
   const llmLabel =
@@ -465,10 +493,13 @@ function StatusBadge({
       : blenderMode === "procedural"
         ? " · procedural"
         : "";
+  const kitLabel =
+    assetKitEntries != null && assetKitEntries > 0 ? ` · kit ${assetKitEntries}` : "";
   return (
     <span className={`status ${state}`} title={model || undefined}>
       {llmLabel}
       {assetLabel}
+      {kitLabel}
     </span>
   );
 }

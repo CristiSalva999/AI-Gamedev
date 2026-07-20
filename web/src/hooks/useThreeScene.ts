@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
@@ -28,14 +28,23 @@ import {
   type LightingMood,
   type TerrainSpec,
 } from "@ai-gamedev/shared";
+import {
+  computePreviewCameraPose,
+  type PreviewCameraView,
+} from "../lib/cameraView.js";
 import { loadGltfClone } from "../lib/gltfCache.js";
 import { buildAssetMesh, disposeObject3D } from "../lib/three-helpers.js";
 import { buildTerrainMesh } from "../lib/terrainMesh.js";
+
+export type { PreviewCameraView };
 
 interface ThreeScene {
   containerRef: React.RefObject<HTMLDivElement>;
   /** Rebuilds the rendered scene to match a blueprint (used for live updates). */
   setBlueprint: (blueprint: GameBlueprint) => void;
+  /** Current preview camera mode (`scene` orbit/chase vs `first_person`). */
+  cameraView: PreviewCameraView;
+  setCameraView: (view: PreviewCameraView) => void;
 }
 
 interface EntityUserData {
@@ -74,6 +83,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
  */
 export function useThreeScene(): ThreeScene {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [cameraView, setCameraViewState] = useState<PreviewCameraView>("scene");
+  const cameraViewRef = useRef<PreviewCameraView>("scene");
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -495,24 +506,30 @@ export function useThreeScene(): ThreeScene {
           );
         }
 
-        // Soft camera follow — tighter chase for racing / fps.
-        const chase = profile.scheme === "drive" || profile.scheme === "fps";
-        const follow = chase ? 0.08 : 0.03;
+        // Camera: user toggle between scene (orbit/chase) and first person.
+        const pose = computePreviewCameraPose({
+          view: cameraViewRef.current,
+          scheme: profile.scheme,
+          playerX: playerRef.current.position.x,
+          playerY: playerRef.current.position.y,
+          playerZ: playerRef.current.position.z,
+          playerYaw: playerRef.current.rotation.y,
+        });
+        playerRef.current.visible = !pose.hidePlayerMesh;
+        // Disable OrbitControls entirely in first person so damping cannot fight the eye camera.
+        controls.enabled = pose.orbitEnabled;
         const target = controls.target;
-        target.x += (playerRef.current.position.x - target.x) * follow;
-        target.y += (playerRef.current.position.y + 1.2 - target.y) * follow;
-        target.z +=
-          (playerRef.current.position.z - (chase ? 0 : 1.5) - target.z) * follow;
-        if (chase && cameraRef.current) {
-          const yaw = playerRef.current.rotation.y;
-          const back = profile.scheme === "drive" ? 8 : 6;
-          const height = profile.scheme === "drive" ? 4.5 : 3.2;
-          const desired = new THREE.Vector3(
-            playerRef.current.position.x + Math.sin(yaw) * back,
-            playerRef.current.position.y + height,
-            playerRef.current.position.z + Math.cos(yaw) * back,
+        target.x += (pose.target.x - target.x) * pose.targetFollow;
+        target.y += (pose.target.y - target.y) * pose.targetFollow;
+        target.z += (pose.target.z - target.z) * pose.targetFollow;
+        if (pose.camera && cameraRef.current) {
+          cameraRef.current.position.lerp(
+            new THREE.Vector3(pose.camera.x, pose.camera.y, pose.camera.z),
+            pose.cameraFollow,
           );
-          cameraRef.current.position.lerp(desired, 0.06);
+          if (!pose.orbitEnabled) {
+            cameraRef.current.lookAt(target.x, target.y, target.z);
+          }
         }
       }
 
@@ -534,7 +551,9 @@ export function useThreeScene(): ThreeScene {
         },
       );
 
-      controls.update();
+      if (controls.enabled) {
+        controls.update();
+      }
       renderer.render(scene, camera);
     };
     animate();
@@ -714,7 +733,17 @@ export function useThreeScene(): ThreeScene {
     }
   }, []);
 
-  return { containerRef: containerRef as React.RefObject<HTMLDivElement>, setBlueprint };
+  const setCameraView = useCallback((view: PreviewCameraView) => {
+    cameraViewRef.current = view;
+    setCameraViewState(view);
+  }, []);
+
+  return {
+    containerRef: containerRef as React.RefObject<HTMLDivElement>,
+    setBlueprint,
+    cameraView,
+    setCameraView,
+  };
 }
 
 function buildPlayerAvatar(color: number): THREE.Group {
