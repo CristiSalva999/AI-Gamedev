@@ -1,5 +1,7 @@
 import type { PreviewCameraView } from "../lib/cameraView.js";
+import type { PreviewDebugSnapshot } from "../lib/debugMonitor.js";
 import type { ViewportInspectorStats } from "../lib/studioChrome.js";
+import { DebugMonitor } from "./DebugMonitor.js";
 
 interface ViewportStudioProps {
   cameraView: PreviewCameraView;
@@ -13,6 +15,9 @@ interface ViewportStudioProps {
   emptyHint: string;
   onResetRun: () => void;
   onFullscreen: () => void;
+  debugVisible: boolean;
+  onToggleDebug: () => void;
+  debugSnapshot: PreviewDebugSnapshot | null;
 }
 
 /**
@@ -31,6 +36,9 @@ export function ViewportStudio({
   emptyHint,
   onResetRun,
   onFullscreen,
+  debugVisible,
+  onToggleDebug,
+  debugSnapshot,
 }: ViewportStudioProps): JSX.Element {
   return (
     <>
@@ -79,6 +87,14 @@ export function ViewportStudio({
           >
             Keys
           </button>
+          <button
+            type="button"
+            className={`tool${debugVisible ? " on" : ""}`}
+            onClick={onToggleDebug}
+            title="Toggle real-time debug monitor (input, player, session)"
+          >
+            Debug
+          </button>
           <button type="button" className="tool" onClick={onFullscreen} title="Fullscreen preview">
             Fullscreen
           </button>
@@ -92,6 +108,8 @@ export function ViewportStudio({
           {controlLine}
         </div>
       ) : null}
+
+      <DebugMonitor snapshot={debugSnapshot} visible={debugVisible} />
 
       <div className="inspector-strip">
         {stats ? (

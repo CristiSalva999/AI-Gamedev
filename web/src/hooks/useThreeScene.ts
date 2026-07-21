@@ -32,6 +32,10 @@ import {
   computePreviewCameraPose,
   type PreviewCameraView,
 } from "../lib/cameraView.js";
+import {
+  buildDebugSnapshot,
+  type PreviewDebugSnapshot,
+} from "../lib/debugMonitor.js";
 import { movementYaw, shouldLeaveKeyToUi } from "../lib/inputPolicy.js";
 import { loadGltfClone } from "../lib/gltfCache.js";
 import { buildAssetMesh, disposeObject3D } from "../lib/three-helpers.js";
@@ -51,6 +55,10 @@ interface ThreeScene {
   setHelpersVisible: (visible: boolean) => void;
   /** Restart the current run: respawn, restore loot/enemies, reset objectives. */
   resetRun: () => void;
+  /** Live debug snapshot (null until the first sample while the monitor is open). */
+  debugSnapshot: PreviewDebugSnapshot | null;
+  debugVisible: boolean;
+  setDebugVisible: (visible: boolean) => void;
 }
 
 interface EntityUserData {
@@ -87,6 +95,10 @@ export function useThreeScene(): ThreeScene {
   const cameraViewRef = useRef<PreviewCameraView>("scene");
   const [helpersVisible, setHelpersVisibleState] = useState(true);
   const helpersVisibleRef = useRef(true);
+  const [debugVisible, setDebugVisibleState] = useState(false);
+  const debugVisibleRef = useRef(false);
+  const [debugSnapshot, setDebugSnapshot] = useState<PreviewDebugSnapshot | null>(null);
+  const lastDebugPublishRef = useRef(0);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -640,6 +652,71 @@ export function useThreeScene(): ThreeScene {
         },
       );
 
+      // Real-time debug monitor: publish a snapshot ~10 Hz while the panel is open.
+      if (debugVisibleRef.current && playerRef.current) {
+        const now = performance.now();
+        if (now - lastDebugPublishRef.current >= 100) {
+          lastDebugPublishRef.current = now;
+          const player = playerRef.current;
+          const nearObj = nearEntityRef.current;
+          let near: {
+            id: string;
+            name: string;
+            dist: number;
+            hint?: string;
+          } | null = null;
+          if (nearObj) {
+            const data = nearObj.userData as EntityUserData;
+            near = {
+              id: data.entityId,
+              name: data.name,
+              dist: Math.hypot(
+                nearObj.position.x - player.position.x,
+                nearObj.position.z - player.position.z,
+              ),
+              hint: data.hint,
+            };
+          }
+          let interactiveVisible = 0;
+          for (const child of entities.children) {
+            const data = child.userData as EntityUserData;
+            if (data.interactive && child.visible && !data.collected && !data.eliminated) {
+              interactiveVisible += 1;
+            }
+          }
+          setDebugSnapshot(
+            buildDebugSnapshot({
+              delta,
+              profile,
+              keys,
+              cameraView: cameraViewRef.current,
+              cameraFov: camera.fov,
+              player: {
+                x: player.position.x,
+                y: player.position.y,
+                z: player.position.z,
+                yaw: player.rotation.y,
+                speed: speedRef.current,
+                driveVelocity: velocityRef.current,
+                jumpOffset: jumpOffsetRef.current,
+                crouching: crouchingRef.current,
+                aiming:
+                  profile.scheme === "fps" && isActionDown(profile, "aim", keys),
+                avatar: avatarModeRef.current,
+              },
+              session: sessionRef.current,
+              near,
+              collected: collectedRef.current.size,
+              checkpoints: checkpointsHitRef.current.size,
+              fireCooldown: fireCooldownRef.current,
+              projectiles: projectiles.children.length,
+              entityCount: entities.children.length,
+              interactiveVisible,
+            }),
+          );
+        }
+      }
+
       if (controls.enabled) {
         controls.update();
       }
@@ -869,6 +946,15 @@ export function useThreeScene(): ThreeScene {
     if (gridRef.current) gridRef.current.visible = visible;
   }, []);
 
+  const setDebugVisible = useCallback((visible: boolean) => {
+    debugVisibleRef.current = visible;
+    setDebugVisibleState(visible);
+    if (!visible) {
+      setDebugSnapshot(null);
+      lastDebugPublishRef.current = 0;
+    }
+  }, []);
+
   const resetRun = useCallback(() => {
     const player = playerRef.current;
     if (!player) return;
@@ -920,6 +1006,9 @@ export function useThreeScene(): ThreeScene {
     helpersVisible,
     setHelpersVisible,
     resetRun,
+    debugSnapshot,
+    debugVisible,
+    setDebugVisible,
   };
 }
 

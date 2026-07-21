@@ -42,6 +42,9 @@ export function App(): JSX.Element {
     helpersVisible,
     setHelpersVisible,
     resetRun,
+    debugSnapshot,
+    debugVisible,
+    setDebugVisible,
   } = useThreeScene();
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -478,6 +481,9 @@ export function App(): JSX.Element {
           emptyHint="Your playable preview appears here as the build streams"
           onResetRun={resetRun}
           onFullscreen={toggleFullscreen}
+          debugVisible={debugVisible}
+          onToggleDebug={() => setDebugVisible(!debugVisible)}
+          debugSnapshot={debugSnapshot}
         />
         {/* Keep primary objective accessible to assistive tech even when strip is visual. */}
         {blueprint ? (
