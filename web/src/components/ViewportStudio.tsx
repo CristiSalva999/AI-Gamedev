@@ -11,7 +11,7 @@ interface ViewportStudioProps {
   onToggleLegend: () => void;
   controlLine: string | null;
   emptyHint: string;
-  onFocusPreview: () => void;
+  onResetRun: () => void;
   onFullscreen: () => void;
 }
 
@@ -29,7 +29,7 @@ export function ViewportStudio({
   onToggleLegend,
   controlLine,
   emptyHint,
-  onFocusPreview,
+  onResetRun,
   onFullscreen,
 }: ViewportStudioProps): JSX.Element {
   return (
@@ -55,8 +55,13 @@ export function ViewportStudio({
         </div>
 
         <div className="viewport-toolbar-actions">
-          <button type="button" className="tool" onClick={onFocusPreview} title="Focus preview for keyboard">
-            Focus
+          <button
+            type="button"
+            className="tool"
+            onClick={onResetRun}
+            title="Restart the run: respawn, restore loot and enemies, reset objectives"
+          >
+            Reset
           </button>
           <button
             type="button"

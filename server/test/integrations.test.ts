@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  controlProfileFor,
   createDefaultContext,
   createIdleClip,
   createWalkClip,
@@ -143,6 +144,19 @@ describe("GamePackager", () => {
     expect(html).toContain("Forest Ruins");
     expect(html).toContain("const BP =");
     expect(html).toContain("WASD");
+  });
+
+  it("drives play.html input from blueprint.controls, not hard-coded keys", () => {
+    const walk = { ...sampleBlueprint(), controls: controlProfileFor("walk") };
+    const html = buildPlayableHtml(walk);
+    // Runner reads the same profile shown in the HUD legend.
+    expect(html).toContain("BP.controls");
+    expect(html).toContain('axis("moveRight","moveLeft")');
+    expect(html).toContain('KEYMAP.interact');
+    // Drive blueprints get throttle/steer physics in the same runner.
+    expect(html).toContain('PROFILE.scheme==="drive"');
+    expect(html).toContain('axis("accelerate","brake")');
+    expect(html).toContain(controlProfileFor("walk").hudLine);
   });
 });
 

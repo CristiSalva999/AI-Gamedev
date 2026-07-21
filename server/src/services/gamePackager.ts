@@ -160,14 +160,34 @@ const RADIUS = BP.environment.worldRadius || 14;
 const collected = new Set();
 function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
 addEventListener("resize",resize);resize();
+// Input is profile-driven: the same blueprint.controls bindings shown in the
+// HUD drive movement here (drive gets throttle/steer, others get move axes).
+const PROFILE=BP.controls||{scheme:"walk",bindings:[
+  {action:"moveForward",keys:["KeyW","ArrowUp"]},
+  {action:"moveBack",keys:["KeyS","ArrowDown"]},
+  {action:"moveLeft",keys:["KeyA","ArrowLeft"]},
+  {action:"moveRight",keys:["KeyD","ArrowRight"]},
+  {action:"interact",keys:["KeyE"]},
+  {action:"sprint",keys:["ShiftLeft","ShiftRight"]}
+]};
+const KEYMAP={};
+const GAME_CODES=new Set(["Escape"]);
+for(const b of PROFILE.bindings){
+  KEYMAP[b.action]=b.keys;
+  for(const k of b.keys)if(!k.startsWith("Mouse"))GAME_CODES.add(k);
+}
 const keys=new Set();
+const down=a=>(KEYMAP[a]||[]).some(k=>keys.has(k));
+const axis=(p,n)=>(down(p)?1:0)-(down(n)?1:0);
 addEventListener("keydown",e=>{
+  if(GAME_CODES.has(e.code))e.preventDefault();
   keys.add(e.code);
-  if(e.code==="Escape"){player.x=BP.player.spawn.x;player.z=BP.player.spawn.z}
-  if(e.code==="KeyE")tryCollect();
+  if(e.code==="Escape"){player.x=BP.player.spawn.x;player.z=BP.player.spawn.z;player.heading=0;player.vel=0}
+  if((KEYMAP.interact||["KeyE"]).includes(e.code))tryCollect();
 });
 addEventListener("keyup",e=>keys.delete(e.code));
-const player={x:BP.player.spawn.x,z:BP.player.spawn.z,bob:0};
+addEventListener("blur",()=>keys.clear());
+const player={x:BP.player.spawn.x,z:BP.player.spawn.z,bob:0,heading:0,vel:0};
 const SCALE=Math.max(14, Math.min(28, 420/RADIUS));
 function worldToScreen(x,z){return {x:W/2+x*SCALE,y:H/2+z*SCALE}}
 function tryCollect(){
@@ -195,13 +215,24 @@ function drawPart(px,py,part,sy){
 }
 function frame(now){
   const dt=Math.min(0.05,(now-last)/1000);last=now;
-  let dx=0,dz=0;
-  if(keys.has("KeyW")||keys.has("ArrowUp"))dz-=1;
-  if(keys.has("KeyS")||keys.has("ArrowDown"))dz+=1;
-  if(keys.has("KeyA")||keys.has("ArrowLeft"))dx-=1;
-  if(keys.has("KeyD")||keys.has("ArrowRight"))dx+=1;
-  const moving=dx||dz;
-  if(moving){const len=Math.hypot(dx,dz);player.x+=dx/len*BP.player.speed*dt;player.z+=dz/len*BP.player.speed*dt}
+  let moving=false;
+  if(PROFILE.scheme==="drive"){
+    const throttle=axis("accelerate","brake");
+    const steer=axis("steerRight","steerLeft");
+    const maxV=BP.player.speed*(down("boost")?1.35:1);
+    if(throttle)player.vel+=throttle*(BP.player.acceleration||22)*dt;
+    else player.vel*=Math.max(0,1-dt*(down("handbrake")?4.5:1.6));
+    player.vel=Math.max(-maxV*0.4,Math.min(maxV,player.vel));
+    if(Math.abs(player.vel)>0.2)player.heading+=steer*(BP.player.turnSpeed||2.4)*dt*Math.sign(player.vel);
+    player.x+=-Math.sin(player.heading)*player.vel*dt;
+    player.z+=-Math.cos(player.heading)*player.vel*dt;
+    moving=Math.abs(player.vel)>0.15;
+  }else{
+    const dx=axis("moveRight","moveLeft"),dz=axis("moveBack","moveForward");
+    moving=!!(dx||dz);
+    const sprint=down("sprint")?1.55:1;
+    if(moving){const len=Math.hypot(dx,dz);player.x+=dx/len*BP.player.speed*sprint*dt;player.z+=dz/len*BP.player.speed*sprint*dt}
+  }
   player.x=Math.max(-RADIUS,Math.min(RADIUS,player.x));
   player.z=Math.max(-RADIUS,Math.min(RADIUS,player.z));
   player.bob=moving?Math.sin(now/120)*4:Math.sin(now/600)*2;

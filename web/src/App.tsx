@@ -41,7 +41,7 @@ export function App(): JSX.Element {
     setCameraView,
     helpersVisible,
     setHelpersVisible,
-    focusPreview,
+    resetRun,
   } = useThreeScene();
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -476,7 +476,7 @@ export function App(): JSX.Element {
           onToggleLegend={() => setLegendVisible((v) => !v)}
           controlLine={controlLine}
           emptyHint="Your playable preview appears here as the build streams"
-          onFocusPreview={focusPreview}
+          onResetRun={resetRun}
           onFullscreen={toggleFullscreen}
         />
         {/* Keep primary objective accessible to assistive tech even when strip is visual. */}
