@@ -1,5 +1,7 @@
 import type { PreviewCameraView } from "../lib/cameraView.js";
+import type { PreviewDebugSnapshot } from "../lib/debugMonitor.js";
 import type { ViewportInspectorStats } from "../lib/studioChrome.js";
+import { DebugMonitor } from "./DebugMonitor.js";
 
 interface ViewportStudioProps {
   cameraView: PreviewCameraView;
@@ -11,8 +13,11 @@ interface ViewportStudioProps {
   onToggleLegend: () => void;
   controlLine: string | null;
   emptyHint: string;
-  onFocusPreview: () => void;
+  onResetRun: () => void;
   onFullscreen: () => void;
+  debugVisible: boolean;
+  onToggleDebug: () => void;
+  debugSnapshot: PreviewDebugSnapshot | null;
 }
 
 /**
@@ -29,8 +34,11 @@ export function ViewportStudio({
   onToggleLegend,
   controlLine,
   emptyHint,
-  onFocusPreview,
+  onResetRun,
   onFullscreen,
+  debugVisible,
+  onToggleDebug,
+  debugSnapshot,
 }: ViewportStudioProps): JSX.Element {
   return (
     <>
@@ -55,8 +63,13 @@ export function ViewportStudio({
         </div>
 
         <div className="viewport-toolbar-actions">
-          <button type="button" className="tool" onClick={onFocusPreview} title="Focus preview for keyboard">
-            Focus
+          <button
+            type="button"
+            className="tool"
+            onClick={onResetRun}
+            title="Restart the run: respawn, restore loot and enemies, reset objectives"
+          >
+            Reset
           </button>
           <button
             type="button"
@@ -74,6 +87,14 @@ export function ViewportStudio({
           >
             Keys
           </button>
+          <button
+            type="button"
+            className={`tool${debugVisible ? " on" : ""}`}
+            onClick={onToggleDebug}
+            title="Toggle real-time debug monitor (input, player, session)"
+          >
+            Debug
+          </button>
           <button type="button" className="tool" onClick={onFullscreen} title="Fullscreen preview">
             Fullscreen
           </button>
@@ -87,6 +108,8 @@ export function ViewportStudio({
           {controlLine}
         </div>
       ) : null}
+
+      <DebugMonitor snapshot={debugSnapshot} visible={debugVisible} />
 
       <div className="inspector-strip">
         {stats ? (

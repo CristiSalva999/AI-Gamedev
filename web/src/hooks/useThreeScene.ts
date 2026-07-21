@@ -32,6 +32,11 @@ import {
   computePreviewCameraPose,
   type PreviewCameraView,
 } from "../lib/cameraView.js";
+import {
+  buildDebugSnapshot,
+  type PreviewDebugSnapshot,
+} from "../lib/debugMonitor.js";
+import { movementYaw, shouldLeaveKeyToUi } from "../lib/inputPolicy.js";
 import { loadGltfClone } from "../lib/gltfCache.js";
 import { buildAssetMesh, disposeObject3D } from "../lib/three-helpers.js";
 import { buildTerrainMesh } from "../lib/terrainMesh.js";
@@ -48,8 +53,12 @@ interface ThreeScene {
   /** Ground-grid helpers visible in the preview. */
   helpersVisible: boolean;
   setHelpersVisible: (visible: boolean) => void;
-  /** Focus the canvas so WASD / fire keys bind to the game. */
-  focusPreview: () => void;
+  /** Restart the current run: respawn, restore loot/enemies, reset objectives. */
+  resetRun: () => void;
+  /** Live debug snapshot (null until the first sample while the monitor is open). */
+  debugSnapshot: PreviewDebugSnapshot | null;
+  debugVisible: boolean;
+  setDebugVisible: (visible: boolean) => void;
 }
 
 interface EntityUserData {
@@ -73,13 +82,7 @@ interface EntityUserData {
 
 const DEFAULT_BOUND = 18;
 const DEFAULT_CONTROLS = controlProfileFor("walk");
-
-/** True when the user is typing in an input/textarea/contenteditable. */
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
-}
+const DEFAULT_SPAWN = { x: 0, y: 0.6, z: 4 };
 
 /**
  * Owns the imperative Three.js runtime and renders a {@link GameBlueprint} as a
@@ -92,6 +95,10 @@ export function useThreeScene(): ThreeScene {
   const cameraViewRef = useRef<PreviewCameraView>("scene");
   const [helpersVisible, setHelpersVisibleState] = useState(true);
   const helpersVisibleRef = useRef(true);
+  const [debugVisible, setDebugVisibleState] = useState(false);
+  const debugVisibleRef = useRef(false);
+  const [debugSnapshot, setDebugSnapshot] = useState<PreviewDebugSnapshot | null>(null);
+  const lastDebugPublishRef = useRef(0);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -110,7 +117,7 @@ export function useThreeScene(): ThreeScene {
   const boundRef = useRef<number>(DEFAULT_BOUND);
   const playerAnimsRef = useRef<GameBlueprint["player"]["animations"] | null>(null);
   const playerBaseYRef = useRef(0.6);
-  const playFocusedRef = useRef(false);
+  const spawnRef = useRef<{ x: number; y: number; z: number }>(DEFAULT_SPAWN);
   /** Respawn only when a brand-new game starts — not on every sneak-peek. */
   const activeGameKeyRef = useRef<string>("");
   const collectedRef = useRef<Set<string>>(new Set());
@@ -146,7 +153,7 @@ export function useThreeScene(): ThreeScene {
     container.setAttribute("role", "application");
     container.setAttribute(
       "aria-label",
-      "Game preview. Click to focus, then use the on-screen control scheme for this game.",
+      "Game preview. Use the on-screen control scheme for this game.",
     );
 
     const hint = document.createElement("div");
@@ -261,9 +268,11 @@ export function useThreeScene(): ThreeScene {
     scene.add(playerLight);
 
     const lockTarget = () => renderer.domElement;
-    const onPointerDown = () => {
-      playFocusedRef.current = true;
+    const onPointerDown = (event: PointerEvent) => {
       container.focus({ preventScroll: true });
+      // Mouse buttons join the held-key set as `Mouse<n>` so profile bindings
+      // like fps fire (Mouse0) / aim (Mouse2) work without special cases.
+      keysRef.current.add(`Mouse${event.button}`);
       // First-person shooters: lock pointer so mouse look aims arrows.
       const el = lockTarget();
       if (
@@ -274,6 +283,13 @@ export function useThreeScene(): ThreeScene {
         el.requestPointerLock?.();
       }
     };
+    const onPointerUp = (event: PointerEvent) => {
+      keysRef.current.delete(`Mouse${event.button}`);
+    };
+    const onContextMenu = (event: Event) => {
+      // Right button is a game binding (aim) — keep the context menu away.
+      event.preventDefault();
+    };
     const onPointerMove = (event: PointerEvent) => {
       if (document.pointerLockElement !== lockTarget()) return;
       if (cameraViewRef.current !== "first_person") return;
@@ -281,20 +297,18 @@ export function useThreeScene(): ThreeScene {
       const sensitivity = 0.0022;
       playerRef.current.rotation.y -= event.movementX * sensitivity;
     };
-    const onFocus = () => {
-      playFocusedRef.current = true;
-    };
-    const onBlur = () => {
-      playFocusedRef.current = false;
+    const onWindowBlur = () => {
+      // Alt-tab etc: drop held keys so movement doesn't stick.
       keysRef.current.clear();
       if (document.pointerLockElement === lockTarget()) {
         document.exitPointerLock?.();
       }
     };
     container.addEventListener("pointerdown", onPointerDown);
+    container.addEventListener("contextmenu", onContextMenu);
+    window.addEventListener("pointerup", onPointerUp);
     document.addEventListener("pointermove", onPointerMove);
-    container.addEventListener("focus", onFocus);
-    container.addEventListener("blur", onBlur);
+    window.addEventListener("blur", onWindowBlur);
 
     const syncHud = () => {
       if (!lootElRef.current || !sessionRef.current || !runtimeRef.current) return;
@@ -364,8 +378,9 @@ export function useThreeScene(): ThreeScene {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      // Never steal keys while the user is composing a chat message.
-      if (isTypingTarget(e.target) || !playFocusedRef.current) return;
+      // Keys work as soon as a game is loaded — no click-to-focus step. The
+      // UI keeps typing targets and Space/Enter on focused buttons.
+      if (shouldLeaveKeyToUi(e.target, e.code)) return;
       if (controlCodesRef.current.has(e.code)) {
         e.preventDefault();
         keysRef.current.add(e.code);
@@ -427,6 +442,8 @@ export function useThreeScene(): ThreeScene {
       let moving = false;
       if (playerRef.current) {
         const scheme = profile.scheme;
+        // Aim (ADS) steadies movement and zooms the first-person camera.
+        const aiming = scheme === "fps" && isActionDown(profile, "aim", keys);
         if (scheme === "drive" || avatarModeRef.current === "car") {
           moving = stepDrive(
             playerRef.current,
@@ -460,7 +477,10 @@ export function useThreeScene(): ThreeScene {
           moving = axisX !== 0 || axisZ !== 0;
           if (moving) {
             const len = Math.hypot(axisX, axisZ);
-            const mul = (sprint ? 1.55 : 1) * (crouchingRef.current ? 0.55 : 1);
+            const mul =
+              (sprint ? 1.55 : 1) *
+              (crouchingRef.current ? 0.55 : 1) *
+              (aiming ? 0.6 : 1);
             const step = (speedRef.current * mul * delta) / len;
             let dx: number;
             let dz: number;
@@ -492,35 +512,47 @@ export function useThreeScene(): ThreeScene {
               playerRef.current.position.z = nextZ;
               // Twin-stick / walk still face the move direction; fps keeps aim yaw.
               if (scheme !== "fps") {
-                playerRef.current.rotation.y = Math.atan2(axisX, axisZ);
+                playerRef.current.rotation.y = movementYaw(axisX, axisZ);
               }
+            }
+          }
+
+          // Twin-stick: arrows steer the aim independently of movement — the
+          // profile lists them under a single `aim` binding, so read the codes.
+          if (scheme === "twin_stick") {
+            const aimX = (keys.has("ArrowRight") ? 1 : 0) - (keys.has("ArrowLeft") ? 1 : 0);
+            const aimZ = (keys.has("ArrowDown") ? 1 : 0) - (keys.has("ArrowUp") ? 1 : 0);
+            if (aimX !== 0 || aimZ !== 0) {
+              playerRef.current.rotation.y = movementYaw(aimX, aimZ);
             }
           }
 
           if (isActionDown(profile, "jump", keys) && jumpOffsetRef.current === 0) {
             verticalVelRef.current = 5.5;
           }
+        }
 
-          if (scheme === "fps" || scheme === "twin_stick") {
-            fireCooldownRef.current = Math.max(0, fireCooldownRef.current - delta);
-            const cooldown = runtimeRef.current?.combat?.fireCooldownSec ?? 0.18;
-            if (isActionDown(profile, "fire", keys) && fireCooldownRef.current <= 0) {
-              if (sessionRef.current && runtimeRef.current) {
-                const before = sessionRef.current.ammo;
-                sessionRef.current = sessionOnFire(sessionRef.current, runtimeRef.current);
-                if (sessionRef.current.ammo < before || sessionRef.current.message === "Fire!") {
-                  spawnProjectile(
-                    projectiles,
-                    playerRef.current,
-                    runtimeRef.current ? isArcheryRuntime(runtimeRef.current) : false,
-                  );
-                }
-                syncHud();
-              } else {
-                spawnProjectile(projectiles, playerRef.current, false);
+        // Fire is profile-driven: every scheme that binds `fire` can shoot
+        // (fps Space/click, twin-stick Space, fly F). Walk/drive are inert here.
+        if (profile.bindings.some((b) => b.action === "fire")) {
+          fireCooldownRef.current = Math.max(0, fireCooldownRef.current - delta);
+          const cooldown = runtimeRef.current?.combat?.fireCooldownSec ?? 0.18;
+          if (isActionDown(profile, "fire", keys) && fireCooldownRef.current <= 0) {
+            if (sessionRef.current && runtimeRef.current) {
+              const before = sessionRef.current.ammo;
+              sessionRef.current = sessionOnFire(sessionRef.current, runtimeRef.current);
+              if (sessionRef.current.ammo < before || sessionRef.current.message === "Fire!") {
+                spawnProjectile(
+                  projectiles,
+                  playerRef.current,
+                  runtimeRef.current ? isArcheryRuntime(runtimeRef.current) : false,
+                );
               }
-              fireCooldownRef.current = cooldown;
+              syncHud();
+            } else {
+              spawnProjectile(projectiles, playerRef.current, false);
             }
+            fireCooldownRef.current = cooldown;
           }
         }
 
@@ -590,6 +622,16 @@ export function useThreeScene(): ThreeScene {
             cameraRef.current.lookAt(target.x, target.y, target.z);
           }
         }
+
+        // Aim-down-sights: narrow the first-person FOV while aiming.
+        if (cameraRef.current) {
+          const targetFov = aiming && cameraViewRef.current === "first_person" ? 38 : 50;
+          const cam = cameraRef.current;
+          if (Math.abs(cam.fov - targetFov) > 0.1) {
+            cam.fov += (targetFov - cam.fov) * Math.min(1, delta * 10);
+            cam.updateProjectionMatrix();
+          }
+        }
       }
 
       updateProximityHint(playerRef.current, entities.children);
@@ -609,6 +651,71 @@ export function useThreeScene(): ThreeScene {
           }
         },
       );
+
+      // Real-time debug monitor: publish a snapshot ~10 Hz while the panel is open.
+      if (debugVisibleRef.current && playerRef.current) {
+        const now = performance.now();
+        if (now - lastDebugPublishRef.current >= 100) {
+          lastDebugPublishRef.current = now;
+          const player = playerRef.current;
+          const nearObj = nearEntityRef.current;
+          let near: {
+            id: string;
+            name: string;
+            dist: number;
+            hint?: string;
+          } | null = null;
+          if (nearObj) {
+            const data = nearObj.userData as EntityUserData;
+            near = {
+              id: data.entityId,
+              name: data.name,
+              dist: Math.hypot(
+                nearObj.position.x - player.position.x,
+                nearObj.position.z - player.position.z,
+              ),
+              hint: data.hint,
+            };
+          }
+          let interactiveVisible = 0;
+          for (const child of entities.children) {
+            const data = child.userData as EntityUserData;
+            if (data.interactive && child.visible && !data.collected && !data.eliminated) {
+              interactiveVisible += 1;
+            }
+          }
+          setDebugSnapshot(
+            buildDebugSnapshot({
+              delta,
+              profile,
+              keys,
+              cameraView: cameraViewRef.current,
+              cameraFov: camera.fov,
+              player: {
+                x: player.position.x,
+                y: player.position.y,
+                z: player.position.z,
+                yaw: player.rotation.y,
+                speed: speedRef.current,
+                driveVelocity: velocityRef.current,
+                jumpOffset: jumpOffsetRef.current,
+                crouching: crouchingRef.current,
+                aiming:
+                  profile.scheme === "fps" && isActionDown(profile, "aim", keys),
+                avatar: avatarModeRef.current,
+              },
+              session: sessionRef.current,
+              near,
+              collected: collectedRef.current.size,
+              checkpoints: checkpointsHitRef.current.size,
+              fireCooldown: fireCooldownRef.current,
+              projectiles: projectiles.children.length,
+              entityCount: entities.children.length,
+              interactiveVisible,
+            }),
+          );
+        }
+      }
 
       if (controls.enabled) {
         controls.update();
@@ -633,9 +740,10 @@ export function useThreeScene(): ThreeScene {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       container.removeEventListener("pointerdown", onPointerDown);
+      container.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("pointerup", onPointerUp);
       document.removeEventListener("pointermove", onPointerMove);
-      container.removeEventListener("focus", onFocus);
-      container.removeEventListener("blur", onBlur);
+      window.removeEventListener("blur", onWindowBlur);
       if (document.pointerLockElement === renderer.domElement) {
         document.exitPointerLock?.();
       }
@@ -740,6 +848,7 @@ export function useThreeScene(): ThreeScene {
     speedRef.current = blueprint.player.speed;
     playerAnimsRef.current = blueprint.player.animations;
     playerBaseYRef.current = blueprint.player.spawn.y;
+    spawnRef.current = { ...blueprint.player.spawn };
     turnSpeedRef.current = blueprint.player.turnSpeed ?? 2.4;
     accelRef.current = blueprint.player.acceleration ?? 22;
     terrainRef.current = blueprint.environment.terrain ?? null;
@@ -788,8 +897,9 @@ export function useThreeScene(): ThreeScene {
         blueprint.player.spawn.y,
         blueprint.player.spawn.z,
       );
-      // Face into the arena so first arrows aren't aimed at the void.
-      player.rotation.y = Math.PI;
+      // Spawn is on +Z looking at the arena centre; forward is local -Z, so
+      // yaw 0 faces (and fires) into the world instead of the void behind it.
+      player.rotation.y = 0;
     }
 
     // Steer keeps createdAt but rewrites objectives — rebuild the live HUD/session.
@@ -836,11 +946,56 @@ export function useThreeScene(): ThreeScene {
     if (gridRef.current) gridRef.current.visible = visible;
   }, []);
 
-  const focusPreview = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.focus({ preventScroll: true });
-    playFocusedRef.current = true;
+  const setDebugVisible = useCallback((visible: boolean) => {
+    debugVisibleRef.current = visible;
+    setDebugVisibleState(visible);
+    if (!visible) {
+      setDebugSnapshot(null);
+      lastDebugPublishRef.current = 0;
+    }
+  }, []);
+
+  const resetRun = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    collectedRef.current.clear();
+    checkpointsHitRef.current.clear();
+    velocityRef.current = 0;
+    verticalVelRef.current = 0;
+    jumpOffsetRef.current = 0;
+    fireCooldownRef.current = 0;
+    keysRef.current.clear();
+    const projectiles = projectilesRef.current;
+    if (projectiles) {
+      for (const child of [...projectiles.children]) {
+        projectiles.remove(child);
+        disposeObject3D(child);
+      }
+    }
+    // Bring collected loot and defeated enemies back for the new run.
+    const entities = entitiesRef.current;
+    if (entities) {
+      for (const child of entities.children) {
+        const data = child.userData as EntityUserData;
+        data.collected = false;
+        data.eliminated = false;
+        child.visible = true;
+      }
+    }
+    const spawn = spawnRef.current;
+    player.position.set(spawn.x, spawn.y, spawn.z);
+    player.rotation.y = 0;
+    if (runtimeRef.current) {
+      sessionRef.current = createSessionState(runtimeRef.current);
+      if (lootElRef.current) {
+        lootElRef.current.textContent = formatSessionHud(
+          sessionRef.current,
+          runtimeRef.current,
+        );
+      }
+    }
+    if (hintElRef.current) hintElRef.current.hidden = true;
+    containerRef.current?.focus({ preventScroll: true });
   }, []);
 
   return {
@@ -850,7 +1005,10 @@ export function useThreeScene(): ThreeScene {
     setCameraView,
     helpersVisible,
     setHelpersVisible,
-    focusPreview,
+    resetRun,
+    debugSnapshot,
+    debugVisible,
+    setDebugVisible,
   };
 }
 
@@ -868,7 +1026,8 @@ function buildPlayerAvatar(color: number): THREE.Group {
     new THREE.BoxGeometry(0.35, 0.35, 0.18),
     new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9 }),
   );
-  pack.position.set(0, 0.75, -0.28);
+  // Forward is local -Z, so the backpack sits behind the avatar at +Z.
+  pack.position.set(0, 0.75, 0.28);
   pack.castShadow = true;
   group.add(pack);
 
@@ -1014,7 +1173,7 @@ function stepFly(
   player.position.z = THREE.MathUtils.clamp(player.position.z + axisZ * step, -bound, bound);
   player.position.y = THREE.MathUtils.clamp(player.position.y + axisY * step, 0.5, 18);
   if (axisX !== 0 || axisZ !== 0) {
-    player.rotation.y = Math.atan2(axisX, axisZ);
+    player.rotation.y = movementYaw(axisX, axisZ);
   }
   return true;
 }

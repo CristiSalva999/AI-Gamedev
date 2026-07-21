@@ -824,6 +824,87 @@ button:disabled {
   backdrop-filter: blur(8px);
 }
 
+/* Real-time variable monitor — sits under the HUD loot badge, never steals keys. */
+.debug-monitor {
+  position: absolute;
+  top: 96px;
+  right: 14px;
+  z-index: 4;
+  width: min(340px, calc(100% - 28px));
+  max-height: calc(100% - 180px);
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--copper) 35%, var(--line));
+  color: var(--ink);
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+  animation: line-in 180ms ease-out both;
+}
+
+.debug-monitor-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--copper);
+  letter-spacing: 0.02em;
+}
+
+.debug-monitor-fps {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: var(--pine-bright);
+  font-weight: 600;
+}
+
+.debug-monitor-section + .debug-monitor-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.debug-monitor-section h3 {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.debug-monitor-section dl {
+  margin: 0;
+}
+
+.debug-monitor-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 6px;
+  align-items: start;
+}
+
+.debug-monitor-row dt {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.debug-monitor-row dd {
+  margin: 0;
+  color: var(--ink);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

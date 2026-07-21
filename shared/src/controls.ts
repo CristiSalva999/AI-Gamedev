@@ -27,8 +27,7 @@ export type ControlAction =
   | "fire"
   | "aim"
   | "reload"
-  | "crouch"
-  | "ability";
+  | "crouch";
 
 export interface ControlBinding {
   action: ControlAction;
@@ -97,13 +96,14 @@ export function controlProfileFor(scheme: ControlScheme): ControlProfile {
           { action: "moveRight", keys: ["KeyD"], label: "D", hint: "Strafe right" },
           { action: "turnLeft", keys: ["ArrowLeft", "KeyQ"], label: "←/Q", hint: "Turn left" },
           { action: "turnRight", keys: ["ArrowRight", "KeyE"], label: "→/E", hint: "Turn right" },
-          { action: "fire", keys: ["Space", "Mouse0"], label: "Space", hint: "Fire" },
+          { action: "fire", keys: ["Space", "Mouse0"], label: "Space/Click", hint: "Fire" },
           { action: "aim", keys: ["Mouse2", "ControlLeft"], label: "Ctrl", hint: "Aim / ADS" },
           { action: "reload", keys: ["KeyR"], label: "R", hint: "Reload" },
           { action: "sprint", keys: ["ShiftLeft", "ShiftRight"], label: "Shift", hint: "Sprint" },
           { action: "crouch", keys: ["KeyC"], label: "C", hint: "Crouch" },
         ],
-        hudLine: "WASD move · ←→/Q E turn · mouse look in FP · Space fire · R reload · Shift sprint",
+        hudLine:
+          "WASD move · ←→/Q E turn · Space/click fire · Ctrl aim · R reload · Shift sprint · C crouch",
       };
     case "twin_stick":
       return {

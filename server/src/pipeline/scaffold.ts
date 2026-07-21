@@ -394,16 +394,19 @@ function featureFlags(
   scheme: GameRuntimeSpec["controlScheme"],
   intent: ReturnType<typeof parsePromptIntent>,
 ): GameRuntimeSpec["features"] {
+  // Keep flags in lockstep with controlProfileFor(): a feature is only "on"
+  // when the scheme actually binds a key for it (fps Space is fire, not jump;
+  // fps KeyE is turn, not interact; twin-stick has no sprint binding).
   return {
     handbrake: scheme === "drive",
     boost: scheme === "drive" || intent.wantsBoost || scheme === "fly",
-    jump: scheme === "walk" || scheme === "fps" || scheme === "fly",
-    sprint: scheme === "walk" || scheme === "fps" || scheme === "twin_stick",
+    jump: scheme === "walk" || scheme === "fly",
+    sprint: scheme === "walk" || scheme === "fps",
     fire: scheme === "fps" || scheme === "twin_stick" || scheme === "fly",
     reload: scheme === "fps",
     aim: scheme === "fps" || scheme === "twin_stick",
     crouch: scheme === "fps" || scheme === "fly",
-    interact: scheme === "walk" || scheme === "fps" || scheme === "twin_stick",
+    interact: scheme === "walk" || scheme === "twin_stick",
     checkpoints: scheme === "drive",
     lives: true,
     staminaDrain: scheme === "walk" || scheme === "fps",

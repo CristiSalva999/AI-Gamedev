@@ -161,13 +161,9 @@ export async function* runBuild(
   blueprint.visualStyle = design.visualStyle;
   blueprint.colorPalette = design.palette;
   blueprint.gameGenre = theme.genre;
+  // hudLine stays canonical: LLM controlHints are flavor text and must never
+  // describe keys the runtime does not actually bind (legend/handler parity).
   blueprint.controls = controlProfileFor(design.systems.controlScheme);
-  if (design.systems.controlHints?.length) {
-    blueprint.controls = {
-      ...blueprint.controls,
-      hudLine: design.systems.controlHints.join(" · "),
-    };
-  }
   context.visualStyle = design.visualStyle;
   context.colorPalette = design.palette;
   blueprint.updatedAt = Date.now();
